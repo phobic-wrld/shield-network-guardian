@@ -1,0 +1,30 @@
+{
+  "name": "shield-network-raspberry-pi-server",
+  "version": "1.0.0",
+  "description": "Backend server for Shield Network running on Raspberry Pi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "bun:dev": "bun --watch server.js",
+    "bun:start": "bun server.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop shield-network-pi",
+    "pm2:restart": "pm2 restart shield-network-pi",
+    "pm2:logs": "pm2 logs shield-network-pi",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "speedtest-cli": "^0.1.0",
+    "speedtest-net": "^2.2.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": []
+}
