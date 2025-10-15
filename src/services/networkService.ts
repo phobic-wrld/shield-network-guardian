@@ -46,7 +46,6 @@ export interface SecurityEvent {
 // ==================== Config ====================
 const API_BASE_URL = `${import.meta.env.VITE_API_URL}/api`;
 
-// Attach JWT token if exists
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
   if (token && config.headers) {
@@ -123,7 +122,23 @@ export const scanNetwork = async () => {
 export const runSpeedTestAPI = async (): Promise<SpeedTestResult> => {
   try {
     const { data } = await axios.get(`${API_BASE_URL}/network/speedtest`);
-    return data;
+
+    // ✅ Calculate connection strength based on thresholds
+    let strength = "Poor";
+    if (data.downloadSpeed >= 20 && data.uploadSpeed >= 10 && data.ping <= 30) {
+      strength = "Excellent";
+    } else if (data.downloadSpeed >= 10 && data.uploadSpeed >= 5 && data.ping <= 70) {
+      strength = "Good";
+    } else if (data.downloadSpeed >= 3 && data.uploadSpeed >= 2 && data.ping <= 120) {
+      strength = "Fair";
+    }
+
+    return {
+      download: data.downloadSpeed,
+      upload: data.uploadSpeed,
+      ping: data.ping,
+      connectionStrength: strength,
+    };
   } catch (error) {
     handleError(error, "Error running speed test");
   }
