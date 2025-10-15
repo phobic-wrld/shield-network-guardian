@@ -3,7 +3,7 @@ import axios from 'axios';
 import speedTest from 'speedtest-net';
 import { getIO } from '../websocket/wsServer';
 
-const PI_URL = 'http://192.168.100.108:3000'; // Raspberry Pi endpoint
+const PI_URL = 'http://192.168.100.10:3000'; // Raspberry Pi endpoint
 
 export const getStats = async (req: Request, res: Response) => {
   try {
