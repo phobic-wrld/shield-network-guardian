@@ -2,6 +2,7 @@
   "name": "shield-network-raspberry-pi-server",
   "version": "1.0.0",
   "description": "Backend server for Shield Network running on Raspberry Pi",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
