@@ -5,12 +5,13 @@ import axios from "axios";
 export interface Device {
   _id?: string;
   name: string;
-  type: "laptop" | "smartphone" | "tv" | "other";
+  vendor?: string;
+  type?: "laptop" | "smartphone" | "tv" | "other";
   ip: string;
   mac: string;
   status: "online" | "offline";
   lastSeen: string;
-  bandwidth: number;
+  bandwidth?: number;
   owner?: string;
   isGuest?: boolean;
 }
@@ -20,9 +21,9 @@ export interface NetworkStats {
   downloadSpeed: number;
   uploadSpeed: number;
   ping: number;
-  stability: number;
-  devices: number;
-  activeOptimizations: number;
+  stability?: number;
+  devices?: number;
+  activeOptimizations?: number;
   timestamp: string;
 }
 
@@ -61,10 +62,18 @@ const handleError = (error: any, message: string) => {
 };
 
 // ==================== Devices ====================
+
+// 🖥️ Fetch all connected devices (with name/vendor support)
 export const fetchDevices = async (): Promise<Device[]> => {
   try {
     const { data } = await axios.get(`${API_BASE_URL}/devices`);
-    return data;
+    // map lastSeen and normalize fields
+    return data.map((device: any) => ({
+      ...device,
+      lastSeen: device.lastSeen || new Date().toISOString(),
+      vendor: device.vendor || "Unknown",
+      name: device.name || "Unknown Device",
+    }));
   } catch (error) {
     handleError(error, "Error fetching devices");
   }
@@ -97,51 +106,55 @@ export const removeDevice = async (id: string) => {
   }
 };
 
-// ==================== Network ====================
-export const fetchNetworkStats = async (limit = 10): Promise<NetworkStats[]> => {
+// 🚫 Block a device from the network (forces re-auth)
+export const blockDevice = async (mac: string) => {
   try {
-    const { data } = await axios.get(`${API_BASE_URL}/network/stats`, {
-      params: { limit },
-    });
+    const { data } = await axios.post(`${API_BASE_URL}/devices/block`, { mac });
+    return data;
+  } catch (error) {
+    handleError(error, "Error blocking device");
+  }
+};
+
+// ==================== Network ====================
+export const fetchNetworkStats = async (): Promise<NetworkStats> => {
+  try {
+    const { data } = await axios.get(`${API_BASE_URL}/network/speedtest`);
     return data;
   } catch (error) {
     handleError(error, "Error fetching network stats");
   }
 };
 
-export const scanNetwork = async () => {
-  try {
-    const { data } = await axios.get(`${API_BASE_URL}/network/scan`);
-    return data;
-  } catch (error) {
-    handleError(error, "Error scanning network");
-  }
-};
-
-// ✅ Run Speed Test (calls backend /api/network/speedtest)
 export const runSpeedTestAPI = async (): Promise<SpeedTestResult> => {
   try {
     const { data } = await axios.get(`${API_BASE_URL}/network/speedtest`);
-
-    // ✅ Calculate connection strength based on thresholds
-    let strength = "Poor";
-    if (data.downloadSpeed >= 20 && data.uploadSpeed >= 10 && data.ping <= 30) {
-      strength = "Excellent";
-    } else if (data.downloadSpeed >= 10 && data.uploadSpeed >= 5 && data.ping <= 70) {
-      strength = "Good";
-    } else if (data.downloadSpeed >= 3 && data.uploadSpeed >= 2 && data.ping <= 120) {
-      strength = "Fair";
-    }
 
     return {
       download: data.downloadSpeed,
       upload: data.uploadSpeed,
       ping: data.ping,
-      connectionStrength: strength,
+      connectionStrength: calculateConnectionStrength(
+        data.downloadSpeed,
+        data.uploadSpeed,
+        data.ping
+      ),
     };
   } catch (error) {
     handleError(error, "Error running speed test");
   }
+};
+
+// ✅ Dynamic connection strength calculation
+export const calculateConnectionStrength = (
+  download: number,
+  upload: number,
+  ping: number
+): string => {
+  if (download >= 20 && upload >= 10 && ping <= 30) return "Excellent";
+  if (download >= 10 && upload >= 5 && ping <= 70) return "Good";
+  if (download >= 3 && upload >= 2 && ping <= 120) return "Fair";
+  return "Poor";
 };
 
 // ==================== Security ====================

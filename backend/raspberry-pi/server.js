@@ -1,20 +1,27 @@
 /**
- * 🖥️ Raspberry Pi Network Monitor Server
- * Provides: Speedtest, Device Scan, Latency Check, WebSocket Real-Time Updates
+ * 🖥️ Shield Network Guardian – Raspberry Pi Server
+ * Features:
+ *  ✅ Speedtest (Download, Upload, Ping)
+ *  ✅ Device Scan with Hostnames
+ *  ✅ Latency Monitor
+ *  ✅ WebSocket Real-Time Broadcasts
+ *  ✅ Integrated Scheduler Support
  */
 
-const express = require('express');
-const http = require('http');
-const { WebSocketServer } = require('ws');
-const { exec } = require('child_process');
-const cors = require('cors');
+import express from "express";
+import http from "http";
+import cors from "cors";
+import { exec } from "child_process";
+import { WebSocketServer } from "ws";
+import deviceRoutes from "./routes/deviceRoutes.js";
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/network-stats' });
+const wss = new WebSocketServer({ server, path: "/network-stats" });
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/devices", deviceRoutes);
 
 // ======================= GLOBAL STATE =======================
 
@@ -23,142 +30,132 @@ let latestStats = {
   downloadSpeed: 0,
   uploadSpeed: 0,
   ping: 0,
-  timestamp: new Date()
+  timestamp: new Date(),
 };
 
 // ======================= UTILITY FUNCTIONS =======================
 
 /**
+ * Run command as promise
+ */
+const runCommand = (cmd) =>
+  new Promise((resolve, reject) => {
+    exec(cmd, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+
+/**
  * Run internet speed test using speedtest-cli
  */
 async function runSpeedTest() {
-  return new Promise((resolve, reject) => {
-    exec('speedtest-cli --json', (err, stdout) => {
-      if (err) return reject(err);
-      try {
-        const result = JSON.parse(stdout);
-        resolve({
-          downloadSpeed: result.download / 1e6, // convert to Mbps
-          uploadSpeed: result.upload / 1e6,
-          ping: result.ping,
-          timestamp: new Date()
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
-  });
+  try {
+    const output = await runCommand("speedtest-cli --json");
+    const result = JSON.parse(output);
+    return {
+      downloadSpeed: result.download / 1e6,
+      uploadSpeed: result.upload / 1e6,
+      ping: result.ping,
+      timestamp: new Date(),
+    };
+  } catch (err) {
+    console.error("❌ Speedtest error:", err.message);
+    return { downloadSpeed: 0, uploadSpeed: 0, ping: 0, timestamp: new Date() };
+  }
 }
 
 /**
- * Get average network latency by pinging 8.8.8.8
+ * Measure average network latency
  */
 async function getLatency() {
-  return new Promise((resolve) => {
-    exec('ping -c 4 8.8.8.8', (err, stdout) => {
-      if (err) return resolve({ latency: 100 });
-      const match = stdout.match(/rtt min\/avg\/max\/mdev = \d+\.\d+\/(\d+\.\d+)/);
-      const latency = match ? parseFloat(match[1]) : 100;
-      resolve({ latency });
-    });
-  });
+  try {
+    const output = await runCommand("ping -c 4 8.8.8.8");
+    const match = output.match(/rtt min\/avg\/max\/mdev = [\d.]+\/([\d.]+)/);
+    const latency = match ? parseFloat(match[1]) : 100;
+    return { latency };
+  } catch {
+    return { latency: 100 };
+  }
 }
 
 /**
- * Scan local network devices using ARP
+ * Scan devices on local network (via ARP)
  */
 async function scanNetworkDevices() {
-  return new Promise((resolve, reject) => {
-    exec('arp -a', (err, stdout) => {
-      if (err) return reject(err);
-      try {
-        const devices = stdout
-          .split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            const ip = line.match(/\b\d{1,3}(\.\d{1,3}){3}\b/);
-            const mac = line.match(/([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})/);
-            const hostname = line.match(/\(([^)]+)\)/);
-            return {
-              ip: ip ? ip[0] : 'unknown',
-              mac: mac ? mac[0] : 'unknown',
-              hostname: hostname ? hostname[1] : '',
-              lastSeen: new Date()
-            };
-          })
-          .filter(d => d.ip !== 'unknown' && d.mac !== 'unknown');
-
-        resolve(devices);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  });
+  try {
+    const output = await runCommand("arp -a");
+    const devices = output
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => {
+        const ipMatch = line.match(/\b\d{1,3}(\.\d{1,3}){3}\b/);
+        const macMatch = line.match(/([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})/);
+        const hostnameMatch = line.match(/^([^\s]+)\s+\(/);
+        return {
+          name: hostnameMatch ? hostnameMatch[1] : "Unknown",
+          ip: ipMatch ? ipMatch[0] : "unknown",
+          mac: macMatch ? macMatch[0].toLowerCase() : "unknown",
+          lastSeen: new Date(),
+        };
+      })
+      .filter((d) => d.ip !== "unknown" && d.mac !== "unknown");
+    return devices;
+  } catch (err) {
+    console.error("❌ Device scan error:", err.message);
+    return [];
+  }
 }
 
 /**
- * Update network stats periodically
+ * Periodically update speed stats
  */
 async function updateLatestStats() {
-  try {
-    const speed = await runSpeedTest();
-    const latency = await getLatency();
-    latestStats = {
-      ...speed,
-      ping: latency.latency,
-      timestamp: new Date()
-    };
-    console.log(`✅ Stats updated: ${latestStats.downloadSpeed.toFixed(2)} Mbps down`);
-  } catch (err) {
-    console.error('❌ Error updating latest stats:', err);
-  }
+  const speed = await runSpeedTest();
+  const latency = await getLatency();
+  latestStats = { ...speed, ping: latency.latency, timestamp: new Date() };
+  console.log(
+    `✅ Updated stats → ↓ ${latestStats.downloadSpeed.toFixed(2)} Mbps | ↑ ${latestStats.uploadSpeed.toFixed(
+      2
+    )} Mbps | Ping ${latestStats.ping} ms`
+  );
+  broadcastToClients({ type: "stats_update", data: latestStats });
 }
 
-setInterval(updateLatestStats, 10000); // every 10 seconds
+// Run initial update & schedule every 10 min
+updateLatestStats();
+setInterval(updateLatestStats, 10 * 60 * 1000);
 
-// ======================= HTTP API ROUTES =======================
+// ======================= API ROUTES =======================
 
-app.get('/health', (req, res) => res.send('OK'));
+app.get("/health", (_, res) => res.send("OK"));
 
-app.get('/api/network/stats', (req, res) => {
-  res.json(latestStats);
+app.get("/api/network/stats", (_, res) => res.json(latestStats));
+
+app.get("/api/network/speedtest", async (_, res) => {
+  const result = await runSpeedTest();
+  latestStats = { ...latestStats, ...result };
+  broadcastToClients({ type: "speedtest", data: result });
+  res.json(result);
 });
 
-app.get('/api/network/speedtest', async (req, res) => {
-  try {
-    const result = await runSpeedTest();
-    latestStats = { ...latestStats, ...result };
-    res.json(result);
-  } catch (err) {
-    console.error('❌ Speedtest failed:', err);
-    res.status(500).json({ error: 'Speedtest failed' });
-  }
+app.get("/api/network/scan", async (_, res) => {
+  const devices = await scanNetworkDevices();
+  broadcastToClients({ type: "device_scan", devices });
+  res.json({ devices });
 });
 
-app.get('/api/network/scan', async (req, res) => {
-  try {
-    const devices = await scanNetworkDevices();
-    res.json({ devices });
-  } catch (err) {
-    console.error('❌ Device scan failed:', err);
-    res.status(500).json({ error: 'Failed to scan devices' });
-  }
-});
-
-app.post('/api/network/suspicious-device', (req, res) => {
+app.post("/api/network/suspicious-device", (req, res) => {
   const { deviceInfo, threatScore } = req.body;
-  if (!deviceInfo || !deviceInfo.mac) {
-    return res.status(400).json({ error: 'Missing device info' });
-  }
+  if (!deviceInfo?.mac) return res.status(400).json({ error: "Missing device info" });
 
-  console.log(`⚠️ Suspicious Device Detected:`, deviceInfo, 'Threat Score:', threatScore);
+  console.log(`⚠️ Suspicious Device:`, deviceInfo, "| Threat Score:", threatScore);
 
-  // Broadcast to all WebSocket clients
   broadcastToClients({
-    type: 'suspicious_device',
+    type: "suspicious_device",
     deviceInfo,
     threatScore,
-    timestamp: new Date()
+    timestamp: new Date(),
   });
 
   res.json({ success: true });
@@ -166,60 +163,53 @@ app.post('/api/network/suspicious-device', (req, res) => {
 
 // ======================= WEBSOCKET SERVER =======================
 
-wss.on('connection', (ws) => {
+wss.on("connection", (ws) => {
   clients.add(ws);
-  console.log('🔗 WebSocket client connected');
+  console.log("🔗 WebSocket client connected");
 
-  // Send initial stats
-  ws.send(JSON.stringify({ type: 'initial_stats', data: latestStats }));
+  ws.send(JSON.stringify({ type: "initial_stats", data: latestStats }));
 
-  ws.on('message', async (msg) => {
+  ws.on("message", async (msg) => {
     const message = msg.toString();
 
-    if (message === 'speedtest') {
-      try {
-        const result = await runSpeedTest();
-        ws.send(JSON.stringify({ type: 'speedtest', data: result }));
-      } catch {
-        ws.send(JSON.stringify({ type: 'error', error: 'Speedtest failed' }));
-      }
+    if (message === "speedtest") {
+      const result = await runSpeedTest();
+      ws.send(JSON.stringify({ type: "speedtest", data: result }));
     }
 
-    if (message === 'scandevices') {
-      try {
-        const devices = await scanNetworkDevices();
-        ws.send(JSON.stringify({ type: 'device_scan', devices }));
-      } catch {
-        ws.send(JSON.stringify({ type: 'error', error: 'Device scan failed' }));
-      }
+    if (message === "scandevices") {
+      const devices = await scanNetworkDevices();
+      ws.send(JSON.stringify({ type: "device_scan", devices }));
     }
   });
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     clients.delete(ws);
-    console.log('❌ WebSocket client disconnected');
+    console.log("❌ WebSocket disconnected");
   });
 });
 
 /**
- * Broadcast message to all connected WebSocket clients
+ * Broadcast message to all clients
  */
 function broadcastToClients(data) {
   const msg = JSON.stringify(data);
-  clients.forEach((c) => {
-    if (c.readyState === 1) c.send(msg);
+  clients.forEach((client) => {
+    if (client.readyState === 1) client.send(msg);
   });
 }
 
-// Broadcast latency to clients every 5 seconds
+/**
+ * Broadcast latency ping every 30s
+ */
 setInterval(async () => {
   const latency = await getLatency();
-  broadcastToClients({ type: 'latency', data: latency });
-}, 5000);
+  broadcastToClients({ type: "latency", data: latency });
+}, 30 * 1000);
 
 // ======================= START SERVER =======================
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Raspberry Pi server running on port ${PORT}`);
+  console.log(`🚀 Shield Network Guardian (Pi) running on port ${PORT}`);
 });
