@@ -4,11 +4,13 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 
-// ✅ Use createRequire to import CommonJS module `oui`
 const require = createRequire(import.meta.url);
 const oui = require("oui");
 
 const CACHE_FILE = path.resolve("./device-cache.json");
+
+// Temporary in-memory store for new device connection requests
+let pendingRequests = [];
 
 /**
  * 🧠 Load previous device state from cache
@@ -186,4 +188,68 @@ export const unblockDevice = (req, res) => {
 
     res.json({ message: `Device ${mac} unblocked successfully` });
   });
+};
+
+/**
+ * 📥 Handle authorization requests from monitor
+ */
+export const handleAuthorizationRequest = (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC address required" });
+
+  if (!pendingRequests.find((r) => r.mac === mac)) {
+    pendingRequests.push({
+      mac,
+      timestamp: new Date().toISOString(),
+      status: "pending",
+    });
+    console.log(`🔔 New authorization request from ${mac}`);
+  }
+
+  res.json({ message: "Authorization request received", mac });
+};
+
+/**
+ * ✅ Approve or 🚫 Deny pending requests
+ */
+export const resolveAuthorizationRequest = (req, res) => {
+  const { mac, action } = req.body;
+  if (!mac || !action)
+    return res.status(400).json({ error: "MAC and action required" });
+
+  const index = pendingRequests.findIndex((r) => r.mac === mac);
+  if (index === -1)
+    return res.status(404).json({ error: "Request not found" });
+
+  const request = pendingRequests[index];
+  request.status = action === "approve" ? "approved" : "blocked";
+
+  pendingRequests.splice(index, 1);
+
+  if (action === "approve") {
+    exec(
+      `sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP && sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP`,
+      (error) => {
+        if (error) console.error("❌ Error approving device:", error);
+      }
+    );
+    console.log(`✅ Approved device ${mac}`);
+  } else {
+    exec(
+      `sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP && sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP && sudo hostapd_cli deauthenticate ${mac} || true`,
+      (error) => {
+        if (error) console.error("❌ Error blocking device:", error);
+      }
+    );
+    console.log(`🚫 Blocked device ${mac}`);
+  }
+
+  res.json({ message: `Device ${mac} ${action}ed successfully` });
+};
+
+/**
+ * 📋 Get all pending authorization requests
+ */
+export const getPendingRequests = (req, res) => {
+  res.json(pendingRequests);
 };

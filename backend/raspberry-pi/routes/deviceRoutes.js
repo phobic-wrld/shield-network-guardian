@@ -5,64 +5,89 @@ import {
   blockDevice,
   unblockDevice,
 } from "../controllers/deviceController.js";
+import { EventEmitter } from "events";
+import fs from "fs";
+import path from "path";
 
 const router = express.Router();
+export const deviceEvents = new EventEmitter();
 
 /**
  * ✅ Get all devices (online + offline)
- * Uses cache to merge previously known devices
  */
 router.get("/", getConnectedDevices);
 
 /**
  * 🚫 Block a specific device by MAC address
- * Example: POST /api/devices/block { "mac": "XX:XX:XX:XX:XX:XX" }
  */
-router.post("/block", blockDevice);
-
-/**
- * ✅ Unblock a specific device by MAC address
- * Example: POST /api/devices/unblock { "mac": "XX:XX:XX:XX:XX:XX" }
- */
-router.post("/unblock", unblockDevice);
-
-/**
- * ⚡ [Optional] Fetch device details by MAC
- * Example: GET /api/devices/:mac
- */
-router.get("/:mac", async (req, res) => {
-  const mac = req.params.mac?.toLowerCase();
+router.post("/block", async (req, res) => {
+  const { mac } = req.body;
   if (!mac) return res.status(400).json({ error: "MAC address required" });
 
   try {
-    const fs = await import("fs");
-    const path = await import("path");
-    const cacheFile = path.resolve("./device-cache.json");
+    const result = await blockDevice(req, res);
 
-    if (!fs.existsSync(cacheFile)) {
-      return res.status(404).json({ error: "No cache file found" });
-    }
+    // 🔔 Emit event for blocked device
+    deviceEvents.emit("deviceBlocked", { mac, time: new Date() });
 
-    const cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-    const device = cache[mac];
-
-    if (!device) return res.status(404).json({ error: "Device not found" });
-
-    res.json(device);
+    res.json({
+      message: `Device ${mac} has been blocked and disconnected.`,
+    });
   } catch (err) {
-    console.error("⚠️ Error reading cache:", err.message);
-    res.status(500).json({ error: "Failed to load device details" });
+    console.error("❌ Failed to block device:", err);
+    res.status(500).json({ error: "Failed to block device" });
   }
 });
 
 /**
- * 🚨 [Optional] Webhook placeholder for new device alerts
- * Will be triggered when a new device connects
+ * ✅ Unblock device
+ */
+router.post("/unblock", async (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC address required" });
+
+  try {
+    await unblockDevice(req, res);
+    deviceEvents.emit("deviceUnblocked", { mac, time: new Date() });
+    res.json({ message: `Device ${mac} unblocked successfully.` });
+  } catch (err) {
+    console.error("❌ Failed to unblock device:", err);
+    res.status(500).json({ error: "Failed to unblock device" });
+  }
+});
+
+/**
+ * ⚡ Fetch device details by MAC address
+ */
+router.get("/:mac", (req, res) => {
+  const mac = req.params.mac?.toLowerCase();
+  if (!mac) return res.status(400).json({ error: "MAC address required" });
+
+  const cacheFile = path.resolve("./device-cache.json");
+
+  if (!fs.existsSync(cacheFile)) {
+    return res.status(404).json({ error: "No cache file found" });
+  }
+
+  const cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+  const device = cache[mac];
+
+  if (!device) return res.status(404).json({ error: "Device not found" });
+  res.json(device);
+});
+
+/**
+ * 🚨 Webhook / Notification route for frontend alerts
+ * e.g., when new device tries to connect
  */
 router.post("/alert", (req, res) => {
   const { mac, ip, name } = req.body;
-  console.log(`🚨 New device attempting to connect: ${name} (${mac}) @ ${ip}`);
-  // TODO: integrate with frontend or Telegram/email alert
+  console.log(`🚨 ALERT: New device ${name || "Unknown"} (${mac}) at ${ip}`);
+
+  // Emit real-time event
+  deviceEvents.emit("newDeviceAttempt", { mac, ip, name, time: new Date() });
+
+  // Future: integrate with WebSocket/Telegram/Email notifications
   res.json({ message: "Alert received" });
 });
 

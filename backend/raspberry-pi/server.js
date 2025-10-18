@@ -5,7 +5,8 @@
  *  ✅ Device Scan with Hostnames
  *  ✅ Latency Monitor
  *  ✅ WebSocket Real-Time Broadcasts
- *  ✅ Integrated Scheduler Support
+ *  ✅ Integrated Device Block/Unblock Notifications
+ *  ✅ Scheduler + Alert System
  */
 
 import express from "express";
@@ -13,7 +14,7 @@ import http from "http";
 import cors from "cors";
 import { exec } from "child_process";
 import { WebSocketServer } from "ws";
-import deviceRoutes from "./routes/deviceRoutes.js";
+import deviceRoutes, { deviceEvents } from "./routes/deviceRoutes.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -36,7 +37,7 @@ let latestStats = {
 // ======================= UTILITY FUNCTIONS =======================
 
 /**
- * Run command as promise
+ * Run a shell command and return output
  */
 const runCommand = (cmd) =>
   new Promise((resolve, reject) => {
@@ -47,7 +48,7 @@ const runCommand = (cmd) =>
   });
 
 /**
- * Run internet speed test using speedtest-cli
+ * 🌐 Run internet speed test using speedtest-cli
  */
 async function runSpeedTest() {
   try {
@@ -66,7 +67,7 @@ async function runSpeedTest() {
 }
 
 /**
- * Measure average network latency
+ * 🕓 Measure average network latency
  */
 async function getLatency() {
   try {
@@ -80,7 +81,7 @@ async function getLatency() {
 }
 
 /**
- * Scan devices on local network (via ARP)
+ * 📡 Scan connected devices via ARP
  */
 async function scanNetworkDevices() {
   try {
@@ -108,25 +109,27 @@ async function scanNetworkDevices() {
 }
 
 /**
- * Periodically update speed stats
+ * 🚀 Update network speed & latency stats
  */
 async function updateLatestStats() {
   const speed = await runSpeedTest();
   const latency = await getLatency();
   latestStats = { ...speed, ping: latency.latency, timestamp: new Date() };
+
   console.log(
     `✅ Updated stats → ↓ ${latestStats.downloadSpeed.toFixed(2)} Mbps | ↑ ${latestStats.uploadSpeed.toFixed(
       2
     )} Mbps | Ping ${latestStats.ping} ms`
   );
+
   broadcastToClients({ type: "stats_update", data: latestStats });
 }
 
-// Run initial update & schedule every 10 min
+// Run initial speed test and repeat every 10 min
 updateLatestStats();
 setInterval(updateLatestStats, 10 * 60 * 1000);
 
-// ======================= API ROUTES =======================
+// ======================= EXPRESS ROUTES =======================
 
 app.get("/health", (_, res) => res.send("OK"));
 
@@ -147,7 +150,8 @@ app.get("/api/network/scan", async (_, res) => {
 
 app.post("/api/network/suspicious-device", (req, res) => {
   const { deviceInfo, threatScore } = req.body;
-  if (!deviceInfo?.mac) return res.status(400).json({ error: "Missing device info" });
+  if (!deviceInfo?.mac)
+    return res.status(400).json({ error: "Missing device info" });
 
   console.log(`⚠️ Suspicious Device:`, deviceInfo, "| Threat Score:", threatScore);
 
@@ -161,7 +165,7 @@ app.post("/api/network/suspicious-device", (req, res) => {
   res.json({ success: true });
 });
 
-// ======================= WEBSOCKET SERVER =======================
+// ======================= WEBSOCKET HANDLER =======================
 
 wss.on("connection", (ws) => {
   clients.add(ws);
@@ -190,7 +194,7 @@ wss.on("connection", (ws) => {
 });
 
 /**
- * Broadcast message to all clients
+ * 📢 Broadcast data to all connected clients
  */
 function broadcastToClients(data) {
   const msg = JSON.stringify(data);
@@ -200,12 +204,29 @@ function broadcastToClients(data) {
 }
 
 /**
- * Broadcast latency ping every 30s
+ * 🌐 Send periodic latency updates
  */
 setInterval(async () => {
   const latency = await getLatency();
   broadcastToClients({ type: "latency", data: latency });
 }, 30 * 1000);
+
+// ======================= DEVICE EVENT LISTENERS =======================
+
+deviceEvents.on("newDeviceAttempt", (device) => {
+  console.log(`📡 New device connection attempt: ${device.mac}`);
+  broadcastToClients({ type: "new_device_attempt", data: device });
+});
+
+deviceEvents.on("deviceBlocked", (device) => {
+  console.log(`🚫 Device blocked: ${device.mac}`);
+  broadcastToClients({ type: "device_blocked", data: device });
+});
+
+deviceEvents.on("deviceUnblocked", (device) => {
+  console.log(`✅ Device unblocked: ${device.mac}`);
+  broadcastToClients({ type: "device_unblocked", data: device });
+});
 
 // ======================= START SERVER =======================
 
