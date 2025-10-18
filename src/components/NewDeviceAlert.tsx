@@ -11,124 +11,98 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Shield, Tablet } from "lucide-react";
+import { Tablet, Shield } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 
-interface Device {
-  id: string;
-  mac: string;
+export interface Device {
+  mac: string; // always string
   ip: string;
-  hostname?: string;
+  name?: string;
+  vendor?: string;
+  status?: "online" | "offline" | "unknown";
+  blocked?: boolean;
 }
 
-export const NewDeviceAlert = () => {
-  const [device, setDevice] = useState<Device | null>(null);
-  const [open, setOpen] = useState(false);
+interface Props {
+  device: Device | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
   const [deviceName, setDeviceName] = useState("");
   const [owner, setOwner] = useState("Me");
   const [isGuest, setIsGuest] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const API_BASE = import.meta.env.VITE_API_URL + "/api/devices";
 
-  // ✅ Use your backend environment variables
-  const API_BASE = import.meta.env.VITE_API_URL; // e.g. http://192.168.100.108:3000
-  const WS_ALERTS_URL = import.meta.env.VITE_ALERTS_WS_URL; // e.g. ws://192.168.100.108:3000/alerts
+  useEffect(() => {
+    if (!device) return;
+    setDeviceName(device.name || "");
+    setOwner("Me");
+    setIsGuest(false);
+  }, [device]);
 
-  // ✅ Mutation for saving device info
-  const saveDevice = useMutation({
-    mutationFn: (data: {
-      id: string;
-      name: string;
-      owner: string;
-      isGuest: boolean;
-    }) => axios.put(`${API_BASE}/devices/${data.id}`, data).then((res) => res.data),
+  const hasValidMAC = !!device?.mac;
 
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["devices"] });
-      queryClient.invalidateQueries({ queryKey: ["securityEvents"] });
+  const handleSave = async () => {
+    if (!device || !hasValidMAC) return;
+    try {
+      await axios.post(`${API_BASE}/alert`, {
+        mac: device.mac,
+        ip: device.ip,
+        name: deviceName || device.name || "Unknown Device",
+        owner,
+        isGuest,
+      });
+
       toast({
         title: "Device Saved",
-        description: "The new device has been added to your network list.",
+        description: `${deviceName || device.name} added to network.`,
       });
-      setOpen(false);
-    },
 
-    onError: () => {
+      onOpenChange(false);
+      queryClient.invalidateQueries(["devices"]);
+    } catch (err) {
+      console.error(err);
       toast({
         title: "Save Failed",
         description: "Unable to save device information.",
         variant: "destructive",
       });
-    },
-  });
+    }
+  };
 
-  // ✅ Mutation for blocking the device
-  const blockDevice = useMutation({
-    mutationFn: (id: string) =>
-      axios.post(`${API_BASE}/devices/${id}/block`).then((res) => res.data),
+  const handleBlock = async () => {
+    if (!device || !hasValidMAC) return;
+    try {
+      await axios.post(`${API_BASE}/block`, { mac: device.mac });
 
-    onSuccess: () => {
       toast({
         title: "Device Blocked",
-        description: "The device has been blocked successfully.",
+        description: `${deviceName || device.name} blocked successfully.`,
       });
-      queryClient.invalidateQueries({ queryKey: ["devices"] });
-      setOpen(false);
-    },
 
-    onError: () => {
+      onOpenChange(false);
+      queryClient.invalidateQueries(["devices"]);
+    } catch (err) {
+      console.error(err);
       toast({
         title: "Block Failed",
-        description: "Failed to block this device.",
+        description: "Unable to block this device.",
         variant: "destructive",
       });
-    },
-  });
-
-  // ✅ Handle Save and Block
-  const handleSave = () => {
-    if (!device) return;
-    saveDevice.mutate({
-      id: device.id,
-      name: deviceName || `Device-${device.mac.slice(-5)}`,
-      owner,
-      isGuest,
-    });
+    }
   };
-
-  const handleBlock = () => {
-    if (device) blockDevice.mutate(device.id);
-  };
-
-  // ✅ Listen for new device alerts via WebSocket
-  useEffect(() => {
-    const ws = new WebSocket(WS_ALERTS_URL);
-
-    ws.onmessage = (event) => {
-      try {
-        const newDevice: Device = JSON.parse(event.data);
-        setDevice(newDevice);
-        setDeviceName(newDevice.hostname || "");
-        setOwner("Me");
-        setIsGuest(false);
-        setOpen(true);
-      } catch (error) {
-        console.error("Invalid WebSocket data:", event.data);
-      }
-    };
-
-    ws.onerror = (err) => console.error("WebSocket error:", err);
-
-    return () => ws.close();
-  }, [WS_ALERTS_URL]);
 
   if (!device) return null;
 
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="max-w-md">
         <AlertDialogHeader>
           <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mb-4">
@@ -136,32 +110,25 @@ export const NewDeviceAlert = () => {
           </div>
           <AlertDialogTitle>New Device Detected</AlertDialogTitle>
           <AlertDialogDescription>
-            A new or unknown device just connected to your network.
-            You can save or block it immediately.
+            A new device connected to your network. Save or block it immediately.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Device Info */}
           <div className="space-y-2">
             <Label>Device Information</Label>
             <div className="px-4 py-3 rounded-md bg-muted text-sm">
               <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                 <div className="text-muted-foreground">MAC Address:</div>
-                <div>{device.mac}</div>
+                <div>{device.mac || "N/A"}</div>
                 <div className="text-muted-foreground">IP Address:</div>
                 <div>{device.ip}</div>
-                {device.hostname && (
-                  <>
-                    <div className="text-muted-foreground">Hostname:</div>
-                    <div>{device.hostname}</div>
-                  </>
-                )}
+                <div className="text-muted-foreground">Vendor:</div>
+                <div>{device.vendor || "Unknown"}</div>
               </div>
             </div>
           </div>
 
-          {/* Editable Fields */}
           <div className="space-y-2">
             <Label htmlFor="device-name">Device Name</Label>
             <Input
@@ -196,17 +163,19 @@ export const NewDeviceAlert = () => {
           </div>
         </div>
 
-        <AlertDialogFooter>
+        <AlertDialogFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
           <AlertDialogCancel>Dismiss</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleBlock}
             className="bg-destructive hover:bg-destructive/90"
+            disabled={!hasValidMAC}
           >
             Block Device
           </AlertDialogAction>
           <AlertDialogAction
             onClick={handleSave}
             className="bg-primary flex items-center gap-2"
+            disabled={!hasValidMAC}
           >
             <Shield className="h-4 w-4" /> Save Device
           </AlertDialogAction>

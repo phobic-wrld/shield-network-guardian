@@ -2,7 +2,11 @@
 import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
-import oui from "oui";
+import { createRequire } from "module";
+
+// ✅ Use createRequire to import CommonJS module `oui`
+const require = createRequire(import.meta.url);
+const oui = require("oui");
 
 const CACHE_FILE = path.resolve("./device-cache.json");
 
@@ -38,9 +42,19 @@ const categorizeDevice = (vendor, name) => {
   const v = `${vendor} ${name}`.toLowerCase();
   if (v.includes("iphone") || v.includes("android") || v.includes("samsung"))
     return "Phone";
-  if (v.includes("intel") || v.includes("hp") || v.includes("dell") || v.includes("lenovo"))
+  if (
+    v.includes("intel") ||
+    v.includes("hp") ||
+    v.includes("dell") ||
+    v.includes("lenovo")
+  )
     return "Laptop";
-  if (v.includes("lg") || v.includes("tv") || v.includes("smart tv") || v.includes("samsung tv"))
+  if (
+    v.includes("lg") ||
+    v.includes("tv") ||
+    v.includes("smart tv") ||
+    v.includes("samsung tv")
+  )
     return "TV";
   return "Other";
 };
@@ -78,7 +92,7 @@ export const getConnectedDevices = (req, res) => {
 
         const deviceType = categorizeDevice(vendor, rawName);
 
-        devices.push({
+        const device = {
           ip,
           mac,
           name: rawName || vendor || "Unknown Device",
@@ -86,34 +100,31 @@ export const getConnectedDevices = (req, res) => {
           type: deviceType,
           status: "online",
           lastSeen: new Date().toISOString(),
-        });
-
-        // Update cache
-        cache[mac] = {
-          ...cache[mac],
-          ip,
-          vendor,
-          name: rawName || vendor,
-          lastSeen: new Date().toISOString(),
-          status: "online",
+          blocked: cache[mac]?.blocked || false,
         };
+
+        // ✅ Add to devices array
+        devices.push(device);
+
+        // ✅ Update cache
+        cache[mac] = device;
       }
     }
 
-    // 💤 Mark devices as offline if missing
+    // 💤 Mark cached devices as offline if not seen this scan
     for (const mac in cache) {
       if (!devices.find((d) => d.mac === mac)) {
         cache[mac].status = "offline";
       }
     }
 
-    // Save the updated cache
+    // 💾 Save updated cache
     saveCache(cache);
 
-    // Merge current + offline
+    // 🔄 Merge online + offline
     const allDevices = Object.values(cache);
 
-    // Sort alphabetically
+    // 🔠 Sort alphabetically
     allDevices.sort((a, b) => a.name.localeCompare(b.name));
 
     res.json(allDevices);
@@ -122,7 +133,6 @@ export const getConnectedDevices = (req, res) => {
 
 /**
  * 🚫 Block a device by MAC address
- * Prevents communication + forces re-auth
  */
 export const blockDevice = (req, res) => {
   const { mac } = req.body;
@@ -139,9 +149,9 @@ export const blockDevice = (req, res) => {
       console.error("❌ Error blocking device:", error);
       return res.status(500).json({ error: "Failed to block device" });
     }
+
     console.log(`🚫 Blocked device: ${mac}`);
 
-    // Update cache
     const cache = loadCache();
     if (cache[mac]) cache[mac].blocked = true;
     saveCache(cache);
@@ -167,9 +177,9 @@ export const unblockDevice = (req, res) => {
       console.error("❌ Error unblocking device:", error);
       return res.status(500).json({ error: "Failed to unblock device" });
     }
+
     console.log(`✅ Unblocked device: ${mac}`);
 
-    // Update cache
     const cache = loadCache();
     if (cache[mac]) cache[mac].blocked = false;
     saveCache(cache);

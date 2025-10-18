@@ -1,130 +1,56 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import {
-  Laptop,
-  Smartphone,
-  Tv,
-  Tablet,
-  Search,
-  MoreVertical,
-  ShieldOff,
-  ShieldCheck,
-} from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Laptop, Smartphone, Tv, Tablet, Search, ShieldOff, ShieldCheck } from "lucide-react";
 
 export interface Device {
-  mac: string;
+  mac: string; // always string
   ip: string;
-  name: string;
-  vendor: string;
+  name?: string;
+  vendor?: string;
   status: "online" | "offline" | "unknown";
   blocked?: boolean;
   lastSeen?: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL + "/api/network";
+interface DeviceManagementProps {
+  devices: Device[];
+  isLoading: boolean;
+  onBlock: (mac: string) => void;
+  onUnblock: (mac: string) => void;
+}
 
-export const DeviceManagement = () => {
+export const DeviceManagement = ({
+  devices, isLoading, onBlock, onUnblock,
+}: DeviceManagementProps) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [groupByVendor, setGroupByVendor] = useState(false);
-  const [tab, setTab] = useState("all");
-  const { toast } = useToast();
+  const [tab, setTab] = useState<"all" | "online" | "offline">("all");
+  const [loadingMACs, setLoadingMACs] = useState<Set<string>>(new Set());
 
-  // --- Fetch devices ---
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["devices"],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/scan`, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      if (!res.ok) throw new Error("Failed to fetch devices");
-      const result = await res.json();
-      return Array.isArray(result) ? result : result.devices || [];
-    },
-    refetchInterval: 8000,
-  });
-
-  const devices: Device[] = Array.isArray(data) ? data : [];
-
-  // --- Block / Unblock device ---
-  const blockUnblockMutation = useMutation({
-    mutationFn: async ({ mac, action }: { mac: string; action: "block" | "unblock" }) => {
-      const res = await fetch(`${API_BASE_URL}/${action}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ mac }),
-      });
-      if (!res.ok) throw new Error(`Failed to ${action} device`);
-      return res.json();
-    },
-    onSuccess: (_, { action, mac }) => {
-      toast({
-        title: action === "block" ? "🚫 Device Blocked" : "✅ Device Unblocked",
-        description: `MAC: ${mac}`,
-      });
-      refetch();
-    },
-    onError: (err: any) =>
-      toast({
-        title: "Error",
-        description: err.message,
-        variant: "destructive",
-      }),
-  });
-
-  // --- Filter and group devices ---
   const filteredDevices = useMemo(() => {
-    if (!Array.isArray(devices)) return [];
-    const filtered = devices.filter(
-      (d) =>
-        d.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        d.mac?.includes(searchTerm) ||
-        d.ip?.includes(searchTerm) ||
-        d.vendor?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-    return filtered.filter((d) =>
-      tab === "online"
-        ? d.status === "online"
-        : tab === "offline"
-        ? d.status === "offline"
-        : true
-    );
+    return devices.filter((d) => {
+      const matchesSearch =
+        (d.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        d.mac.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        d.ip.includes(searchTerm) ||
+        (d.vendor || "").toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesTab =
+        tab === "online" ? d.status === "online" :
+        tab === "offline" ? d.status === "offline" : true;
+
+      return matchesSearch && matchesTab;
+    });
   }, [devices, searchTerm, tab]);
 
   const groupedDevices = useMemo(() => {
@@ -137,7 +63,7 @@ export const DeviceManagement = () => {
   }, [filteredDevices]);
 
   const getDeviceIcon = (name: string) => {
-    const n = name?.toLowerCase() || "";
+    const n = (name || "").toLowerCase();
     if (n.includes("phone") || n.includes("android") || n.includes("iphone")) return <Smartphone size={18} />;
     if (n.includes("tv")) return <Tv size={18} />;
     if (n.includes("tablet")) return <Tablet size={18} />;
@@ -146,19 +72,29 @@ export const DeviceManagement = () => {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case "online":
-        return <Badge className="bg-green-100 text-green-700 border-green-300">Online</Badge>;
-      case "offline":
-        return <Badge className="bg-red-100 text-red-700 border-red-300">Offline</Badge>;
-      default:
-        return <Badge variant="outline">Unknown</Badge>;
+      case "online": return <Badge className="bg-green-100 text-green-700 border-green-300">Online</Badge>;
+      case "offline": return <Badge className="bg-red-100 text-red-700 border-red-300">Offline</Badge>;
+      default: return <Badge variant="outline">Unknown</Badge>;
     }
   };
 
-  if (isLoading)
-    return <p className="text-center py-8 animate-pulse">Scanning network...</p>;
-  if (error)
-    return <p className="text-center text-red-500 py-8">{(error as Error).message}</p>;
+  const formatDate = (iso?: string) => iso ? new Date(iso).toLocaleString() : "—";
+
+  const handleBlock = (mac: string) => {
+    if (!mac) return;
+    setLoadingMACs(prev => new Set(prev).add(mac));
+    onBlock(mac);
+    setLoadingMACs(prev => { const copy = new Set(prev); copy.delete(mac); return copy; });
+  };
+
+  const handleUnblock = (mac: string) => {
+    if (!mac) return;
+    setLoadingMACs(prev => new Set(prev).add(mac));
+    onUnblock(mac);
+    setLoadingMACs(prev => { const copy = new Set(prev); copy.delete(mac); return copy; });
+  };
+
+  if (isLoading) return <p className="text-center py-8 animate-pulse">Loading devices...</p>;
 
   return (
     <div className="space-y-6">
@@ -170,11 +106,8 @@ export const DeviceManagement = () => {
                 Device Management
                 <Badge variant="outline">{devices.length}</Badge>
               </CardTitle>
-              <CardDescription>
-                Monitor and manage connected devices in real-time
-              </CardDescription>
+              <CardDescription>Monitor and manage connected devices in real-time</CardDescription>
             </div>
-
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
               <Input
@@ -189,7 +122,7 @@ export const DeviceManagement = () => {
 
         <CardContent>
           <div className="flex items-center justify-between mb-4">
-            <Tabs defaultValue="all" value={tab} onValueChange={setTab}>
+            <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
               <TabsList>
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="online">Online</TabsTrigger>
@@ -204,30 +137,31 @@ export const DeviceManagement = () => {
           </div>
 
           {groupByVendor ? (
-            <div className="space-y-8">
-              {Object.entries(groupedDevices).map(([vendor, list]) => (
-                <div key={vendor}>
-                  <h3 className="text-lg font-semibold flex items-center gap-2 mb-3">
-                    {getDeviceIcon(vendor)} {vendor}
-                    <Badge variant="outline">{list.length}</Badge>
-                  </h3>
-                  <DeviceTable
-                    devices={list}
-                    getDeviceIcon={getDeviceIcon}
-                    getStatusBadge={getStatusBadge}
-                    onAction={(mac, action) => blockUnblockMutation.mutate({ mac, action })}
-                    isMutating={blockUnblockMutation.isPending}
-                  />
-                </div>
-              ))}
-            </div>
+            Object.entries(groupedDevices).map(([vendor, list]) => (
+              <div key={vendor} className="space-y-4">
+                <h3 className="text-lg font-semibold flex items-center gap-2 mb-2">
+                  {getDeviceIcon(vendor)} {vendor} <Badge variant="outline">{list.length}</Badge>
+                </h3>
+                <DeviceTable
+                  devices={list}
+                  getDeviceIcon={getDeviceIcon}
+                  getStatusBadge={getStatusBadge}
+                  onBlock={handleBlock}
+                  onUnblock={handleUnblock}
+                  formatDate={formatDate}
+                  loadingMACs={loadingMACs}
+                />
+              </div>
+            ))
           ) : (
             <DeviceTable
               devices={filteredDevices}
               getDeviceIcon={getDeviceIcon}
               getStatusBadge={getStatusBadge}
-              onAction={(mac, action) => blockUnblockMutation.mutate({ mac, action })}
-              isMutating={blockUnblockMutation.isPending}
+              onBlock={handleBlock}
+              onUnblock={handleUnblock}
+              formatDate={formatDate}
+              loadingMACs={loadingMACs}
             />
           )}
         </CardContent>
@@ -236,19 +170,22 @@ export const DeviceManagement = () => {
   );
 };
 
-// --- Device Table ---
 const DeviceTable = ({
   devices,
   getDeviceIcon,
   getStatusBadge,
-  onAction,
-  isMutating,
+  onBlock,
+  onUnblock,
+  formatDate,
+  loadingMACs,
 }: {
   devices: Device[];
   getDeviceIcon: (name: string) => JSX.Element;
   getStatusBadge: (status: string) => JSX.Element;
-  onAction: (mac: string, action: "block" | "unblock") => void;
-  isMutating: boolean;
+  onBlock: (mac: string) => void;
+  onUnblock: (mac: string) => void;
+  formatDate: (iso?: string) => string;
+  loadingMACs: Set<string>;
 }) => (
   <div className="border rounded-lg overflow-x-auto">
     <Table>
@@ -263,55 +200,46 @@ const DeviceTable = ({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {devices.length > 0 ? (
-          devices.map((d) => (
-            <TableRow key={d.mac}>
-              <TableCell>
-                <div className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                    {getDeviceIcon(d.name || d.vendor)}
-                  </div>
-                  <div>
-                    <p className="font-medium">{d.name || "Unknown Device"}</p>
-                    <p className="text-xs text-muted-foreground">{d.mac}</p>
-                  </div>
+        {devices.length > 0 ? devices.map((d, i) => (
+          <TableRow key={d.mac || `${d.name ?? "unknown"}-${d.ip}-${i}`}>
+            <TableCell>
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  {getDeviceIcon(d.name || d.vendor || "Unknown")}
                 </div>
-              </TableCell>
-              <TableCell>{d.ip}</TableCell>
-              <TableCell>{getStatusBadge(d.status)}</TableCell>
-              <TableCell>{d.lastSeen || "—"}</TableCell>
-              <TableCell>{d.vendor || "Unknown"}</TableCell>
-              <TableCell className="text-right">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm">
-                      <MoreVertical size={16} />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    {!d.blocked ? (
-                      <DropdownMenuItem
-                        disabled={isMutating}
-                        className="text-destructive flex items-center gap-2"
-                        onClick={() => onAction(d.mac, "block")}
-                      >
-                        <ShieldOff size={14} /> Block
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem
-                        disabled={isMutating}
-                        className="text-green-600 flex items-center gap-2"
-                        onClick={() => onAction(d.mac, "unblock")}
-                      >
-                        <ShieldCheck size={14} /> Unblock
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
-            </TableRow>
-          ))
-        ) : (
+                <div>
+                  <p className="font-medium">{d.name || "Unknown Device"}</p>
+                  <p className="text-xs text-muted-foreground">{d.mac || "N/A"}</p>
+                </div>
+              </div>
+            </TableCell>
+            <TableCell>{d.ip}</TableCell>
+            <TableCell>{getStatusBadge(d.status)}</TableCell>
+            <TableCell>{formatDate(d.lastSeen)}</TableCell>
+            <TableCell>{d.vendor || "Unknown"}</TableCell>
+            <TableCell className="text-right">
+              {d.blocked ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onUnblock(d.mac)}
+                  disabled={!d.mac || loadingMACs.has(d.mac)}
+                >
+                  <ShieldCheck size={14} /> {loadingMACs.has(d.mac) ? "..." : "Unblock"}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => onBlock(d.mac)}
+                  disabled={!d.mac || loadingMACs.has(d.mac)}
+                >
+                  <ShieldOff size={14} /> {loadingMACs.has(d.mac) ? "..." : "Block"}
+                </Button>
+              )}
+            </TableCell>
+          </TableRow>
+        )) : (
           <TableRow>
             <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
               No devices found.

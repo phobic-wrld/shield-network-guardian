@@ -1,150 +1,111 @@
 import { useState, useEffect } from "react";
-import { DeviceManagement } from "@/components/DeviceManagement";
-import { NewDeviceAlert } from "@/components/NewDeviceAlert";
+import { DeviceManagement } from "./DeviceManagement";
+import { NewDeviceAlert } from "./NewDeviceAlert";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-// ----- Device interface -----
 export interface Device {
+  mac: string; // keep as string
   ip: string;
-  mac: string;
   name: string;
-  vendor?: string;
+  vendor: string;
+  type?: string;
   status: "online" | "offline" | "unknown";
+  blocked?: boolean;
   lastSeen: string;
 }
 
-// ✅ Raspberry Pi backend base URL
-const API_BASE = "http://192.168.100.10:3000/api/devices";
+const API_BASE = import.meta.env.VITE_API_URL + "/api/devices";
 
-/**
- * 📡 Fetch connected devices from backend
- */
 const fetchDevices = async (): Promise<Device[]> => {
-  const response = await fetch(API_BASE, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  const res = await fetch(API_BASE);
+  if (!res.ok) throw new Error("Failed to fetch devices");
+  const data: Device[] = await res.json();
 
-  if (!response.ok) throw new Error("Failed to fetch devices");
-
-  const data = await response.json();
-
-  // ✅ Handle both array and object responses
-  const devices = Array.isArray(data.devices) ? data.devices : data;
-
-  return devices.map((d: any) => ({
-    ip: d.ip,
-    mac: d.mac,
-    name: d.name || "Unknown Device",
+  return data.map(d => ({
+    mac: d.mac || "", // keep as string
+    ip: d.ip || "unknown",
+    name: d.name || d.mac || "Unknown Device",
     vendor: d.vendor || "Unknown",
+    type: d.type || "Other",
     status: d.status || "unknown",
+    blocked: d.blocked || false,
     lastSeen: d.lastSeen || new Date().toISOString(),
   }));
 };
 
-/**
- * 🚫 Block device by MAC
- */
 const blockDevice = async (mac: string) => {
-  const response = await fetch(`${API_BASE}/block`, {
+  const res = await fetch(`${API_BASE}/block`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mac }),
   });
-
-  if (!response.ok) throw new Error("Failed to block device");
-  return response.json();
+  if (!res.ok) throw new Error("Failed to block device");
+  return res.json();
 };
 
-/**
- * ✅ Unblock device by MAC
- */
 const unblockDevice = async (mac: string) => {
-  const response = await fetch(`${API_BASE}/unblock`, {
+  const res = await fetch(`${API_BASE}/unblock`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mac }),
   });
-
-  if (!response.ok) throw new Error("Failed to unblock device");
-  return response.json();
+  if (!res.ok) throw new Error("Failed to unblock device");
+  return res.json();
 };
 
 export const ConnectedDeviceList = () => {
   const [alertDevice, setAlertDevice] = useState<Device | null>(null);
   const [showAlert, setShowAlert] = useState(false);
   const [knownMACs, setKnownMACs] = useState<Set<string>>(new Set());
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // 📡 Fetch devices using React Query
-  const {
-    data: devices = [],
-    isLoading,
-    isError,
-  } = useQuery<Device[]>({
+  const { data: devices = [], isLoading, isError } = useQuery<Device[]>({
     queryKey: ["devices"],
     queryFn: fetchDevices,
-    refetchInterval: 15000, // refresh every 15 seconds
-    staleTime: 5000,
+    refetchInterval: 10000,
   });
 
-  // 🚫 Block Mutation
   const blockMutation = useMutation({
-    mutationFn: blockDevice,
+    mutationFn: (mac: string) => blockDevice(mac),
     onSuccess: (_, mac) => {
-      toast({
-        title: "🚫 Device Blocked",
-        description: `MAC: ${mac}`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      toast({ title: "Device Blocked", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries(["devices"]);
     },
-    onError: () =>
-      toast({
-        title: "❌ Failed to block device",
-        description: "Try again later.",
-        variant: "destructive",
-      }),
+    onError: () => toast({ title: "Error", description: "Failed to block device" }),
   });
 
-  // ✅ Unblock Mutation
   const unblockMutation = useMutation({
-    mutationFn: unblockDevice,
+    mutationFn: (mac: string) => unblockDevice(mac),
     onSuccess: (_, mac) => {
-      toast({
-        title: "✅ Device Unblocked",
-        description: `MAC: ${mac}`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      toast({ title: "Device Unblocked", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries(["devices"]);
     },
-    onError: () =>
-      toast({
-        title: "❌ Failed to unblock device",
-        description: "Try again later.",
-        variant: "destructive",
-      }),
+    onError: () => toast({ title: "Error", description: "Failed to unblock device" }),
   });
 
-  // 🛰️ Detect new devices joining the network
   useEffect(() => {
     if (!devices.length) return;
 
-    const currentMACs = new Set(devices.map((d) => d.mac.toLowerCase()));
-    const newDevices = devices.filter((d) => !knownMACs.has(d.mac.toLowerCase()));
+    const currentMACs = new Set(
+      devices.map(d => d.mac.toLowerCase()).filter(mac => !!mac)
+    );
+
+    const newDevices = devices.filter(
+      d => d.mac && !knownMACs.has(d.mac.toLowerCase())
+    );
 
     if (newDevices.length > 0) {
-      newDevices.forEach((device) => {
+      newDevices.forEach(d =>
         toast({
-          title: "📡 New Device Detected",
-          description: `${device.name || device.mac} joined the network.`,
+          title: "New Device Detected",
+          description: `${d.name || d.mac || "Unknown Device"} joined the network`,
           duration: 8000,
-        });
-      });
+        })
+      );
 
-      // Show alert popup for the first new device
       if (!alertDevice && newDevices[0]) {
         setAlertDevice(newDevices[0]);
         setShowAlert(true);
@@ -152,26 +113,19 @@ export const ConnectedDeviceList = () => {
     }
 
     setKnownMACs(currentMACs);
-  }, [devices]);
+  }, [devices, knownMACs, toast, alertDevice]);
 
-  // 🧭 Loading or error states
-  if (isLoading) return <p className="text-gray-500 p-4">Loading devices...</p>;
-  if (isError)
-    return (
-      <p className="text-red-500 p-4">
-        Failed to load device data. Check your Raspberry Pi or API connection.
-      </p>
-    );
+  if (isLoading) return <p>Loading devices...</p>;
+  if (isError) return <p>Error loading devices.</p>;
 
   return (
     <>
       <DeviceManagement
         devices={devices}
         isLoading={isLoading}
-        onBlock={(mac) => blockMutation.mutate(mac)}
-        onUnblock={(mac) => unblockMutation.mutate(mac)}
+        onBlock={(mac) => mac ? blockMutation.mutate(mac) : undefined}
+        onUnblock={(mac) => mac ? unblockMutation.mutate(mac) : undefined}
       />
-
       {alertDevice && (
         <NewDeviceAlert
           device={alertDevice}
