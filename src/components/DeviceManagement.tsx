@@ -59,7 +59,7 @@ export const DeviceManagement = ({
   const [tab, setTab] = useState<"all" | "online" | "offline">("all");
   const [loadingMACs, setLoadingMACs] = useState<Set<string>>(new Set());
 
-  /** 🔍 Search + filter devices */
+  /** 🔍 Filter devices by search term and tab */
   const filteredDevices = useMemo(() => {
     return devices.filter((d) => {
       const term = searchTerm.toLowerCase();
@@ -80,7 +80,7 @@ export const DeviceManagement = ({
     });
   }, [devices, searchTerm, tab]);
 
-  /** 🏷️ Group devices by vendor */
+  /** 🏷 Group devices by vendor */
   const groupedDevices = useMemo(() => {
     return filteredDevices.reduce((acc, device) => {
       const vendor = device.vendor || "Unknown Vendor";
@@ -90,8 +90,8 @@ export const DeviceManagement = ({
     }, {} as Record<string, Device[]>);
   }, [filteredDevices]);
 
-  /** 💻 Icons for device types */
-  const getDeviceIcon = (name: string) => {
+  /** 💻 Device type icons */
+  const getDeviceIcon = (name?: string) => {
     const n = (name || "").toLowerCase();
     if (n.includes("phone") || n.includes("android") || n.includes("iphone"))
       return <Smartphone size={18} />;
@@ -100,58 +100,31 @@ export const DeviceManagement = ({
     return <Laptop size={18} />;
   };
 
-  /** 🟢🔴 Status color badges */
+  /** 🟢🔴 Status badges */
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "online":
-        return (
-          <Badge className="bg-green-100 text-green-700 border-green-300">
-            Online
-          </Badge>
-        );
+        return <Badge className="bg-green-100 text-green-700 border-green-300">Online</Badge>;
       case "offline":
-        return (
-          <Badge className="bg-red-100 text-red-700 border-red-300">
-            Offline
-          </Badge>
-        );
+        return <Badge className="bg-red-100 text-red-700 border-red-300">Offline</Badge>;
       default:
         return <Badge variant="outline">Unknown</Badge>;
     }
   };
 
-  const formatDate = (iso?: string) =>
-    iso ? new Date(iso).toLocaleString() : "—";
+  /** Format timestamp */
+  const formatDate = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
 
-  /** 🚫 Block / ✅ Unblock handlers */
+  /** 🚫 Block / ✅ Unblock */
   const handleBlock = (mac: string) => {
-    if (!mac) return;
     setLoadingMACs((prev) => new Set(prev).add(mac));
     onBlock(mac);
-    setTimeout(
-      () =>
-        setLoadingMACs((prev) => {
-          const copy = new Set(prev);
-          copy.delete(mac);
-          return copy;
-        }),
-      2000
-    );
+    setTimeout(() => setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; }), 2000);
   };
-
   const handleUnblock = (mac: string) => {
-    if (!mac) return;
     setLoadingMACs((prev) => new Set(prev).add(mac));
     onUnblock(mac);
-    setTimeout(
-      () =>
-        setLoadingMACs((prev) => {
-          const copy = new Set(prev);
-          copy.delete(mac);
-          return copy;
-        }),
-      2000
-    );
+    setTimeout(() => setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; }), 2000);
   };
 
   if (isLoading)
@@ -176,12 +149,9 @@ export const DeviceManagement = ({
               </CardDescription>
             </div>
 
-            {/* 🔍 Search */}
+            {/* Search */}
             <div className="relative">
-              <Search
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-                size={16}
-              />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
               <Input
                 placeholder="Search devices..."
                 value={searchTerm}
@@ -193,7 +163,6 @@ export const DeviceManagement = ({
         </CardHeader>
 
         <CardContent>
-          {/* 🔄 Filters and grouping */}
           <div className="flex items-center justify-between mb-4">
             <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
               <TabsList>
@@ -205,50 +174,47 @@ export const DeviceManagement = ({
 
             <div className="flex items-center gap-2">
               <span className="text-sm">Group by Vendor</span>
-              <Switch
-                checked={groupByVendor}
-                onCheckedChange={setGroupByVendor}
-              />
+              <Switch checked={groupByVendor} onCheckedChange={setGroupByVendor} />
             </div>
           </div>
 
-          {/* 🧩 Table */}
-          {groupByVendor ? (
-            Object.entries(groupedDevices).map(([vendor, list]) => (
-              <div key={vendor} className="space-y-4 mb-6">
-                <h3 className="text-lg font-semibold flex items-center gap-2 mb-2">
-                  {getDeviceIcon(vendor)} {vendor}{" "}
-                  <Badge variant="outline">{list.length}</Badge>
-                </h3>
-                <DeviceTable
-                  devices={list}
-                  getDeviceIcon={getDeviceIcon}
-                  getStatusBadge={getStatusBadge}
-                  onBlock={handleBlock}
-                  onUnblock={handleUnblock}
-                  formatDate={formatDate}
-                  loadingMACs={loadingMACs}
-                />
-              </div>
-            ))
-          ) : (
-            <DeviceTable
-              devices={filteredDevices}
-              getDeviceIcon={getDeviceIcon}
-              getStatusBadge={getStatusBadge}
-              onBlock={handleBlock}
-              onUnblock={handleUnblock}
-              formatDate={formatDate}
-              loadingMACs={loadingMACs}
-            />
-          )}
+          {/* Device Table */}
+          {groupByVendor
+            ? Object.entries(groupedDevices).map(([vendor, list]) => (
+                <div key={vendor} className="space-y-4 mb-6">
+                  <h3 className="text-lg font-semibold flex items-center gap-2 mb-2">
+                    {getDeviceIcon(vendor)} {vendor}{" "}
+                    <Badge variant="outline">{list.length}</Badge>
+                  </h3>
+                  <DeviceTable
+                    devices={list}
+                    getDeviceIcon={getDeviceIcon}
+                    getStatusBadge={getStatusBadge}
+                    onBlock={handleBlock}
+                    onUnblock={handleUnblock}
+                    formatDate={formatDate}
+                    loadingMACs={loadingMACs}
+                  />
+                </div>
+              ))
+            : (
+              <DeviceTable
+                devices={filteredDevices}
+                getDeviceIcon={getDeviceIcon}
+                getStatusBadge={getStatusBadge}
+                onBlock={handleBlock}
+                onUnblock={handleUnblock}
+                formatDate={formatDate}
+                loadingMACs={loadingMACs}
+              />
+            )}
         </CardContent>
       </Card>
     </div>
   );
 };
 
-/** 🧱 Table Component */
+/** Device Table Component */
 const DeviceTable = ({
   devices,
   getDeviceIcon,
@@ -259,7 +225,7 @@ const DeviceTable = ({
   loadingMACs,
 }: {
   devices: Device[];
-  getDeviceIcon: (name: string) => JSX.Element;
+  getDeviceIcon: (name?: string) => JSX.Element;
   getStatusBadge: (status: string) => JSX.Element;
   onBlock: (mac: string) => void;
   onUnblock: (mac: string) => void;
@@ -278,23 +244,18 @@ const DeviceTable = ({
           <TableHead className="text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
-
       <TableBody>
-        {devices.length > 0 ? (
+        {devices.length ? (
           devices.map((d, i) => (
             <TableRow key={d.mac || `${d.ip}-${i}`}>
               <TableCell>
                 <div className="flex items-center gap-3">
                   <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                    {getDeviceIcon(d.name || d.vendor || "Unknown")}
+                    {getDeviceIcon(d.name || d.vendor)}
                   </div>
                   <div>
-                    <p className="font-medium">
-                      {d.name || "Unknown Device"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {d.mac || "—"}
-                    </p>
+                    <p className="font-medium">{d.name || "Unknown Device"}</p>
+                    <p className="text-xs text-muted-foreground">{d.mac || "—"}</p>
                   </div>
                 </div>
               </TableCell>
@@ -329,10 +290,7 @@ const DeviceTable = ({
           ))
         ) : (
           <TableRow>
-            <TableCell
-              colSpan={6}
-              className="text-center py-8 text-muted-foreground"
-            >
+            <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
               No devices found.
             </TableCell>
           </TableRow>

@@ -35,26 +35,26 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
   const [deviceName, setDeviceName] = useState("");
   const [owner, setOwner] = useState("Me");
   const [isGuest, setIsGuest] = useState(false);
+  const [timeLimit, setTimeLimit] = useState(""); // Optional for guest devices
   const [loading, setLoading] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const API_BASE = import.meta.env.VITE_API_URL + "/api/devices";
 
-  // Reset form whenever a new device is shown
+  // Reset form when device changes
   useEffect(() => {
     if (device) {
       setDeviceName(device.name || "");
       setOwner("Me");
       setIsGuest(false);
+      setTimeLimit("");
     }
   }, [device]);
 
   const hasValidMAC = !!device?.mac;
 
-  /**
-   * ✅ Authorize device (mark as trusted)
-   */
+  /** ✅ Authorize device */
   const handleAuthorize = async () => {
     if (!device || !hasValidMAC) return;
 
@@ -66,6 +66,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
         name: deviceName.trim() || device.name || "Unnamed Device",
         owner: owner.trim() || "Unknown",
         isGuest,
+        timeLimit: isGuest && timeLimit ? timeLimit : undefined,
       });
 
       toast({
@@ -87,9 +88,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
     }
   };
 
-  /**
-   * 🚫 Block device (deny access)
-   */
+  /** 🚫 Block device */
   const handleBlock = async () => {
     if (!device || !hasValidMAC) return;
 
@@ -116,7 +115,6 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
     }
   };
 
-  // Early return if no device data
   if (!device) return null;
 
   return (
@@ -171,6 +169,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
             />
           </div>
 
+          {/* Guest device checkbox */}
           <div className="flex items-center space-x-2">
             <input
               type="checkbox"
@@ -184,6 +183,20 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
               Mark as guest device
             </Label>
           </div>
+
+          {isGuest && (
+            <div className="space-y-2">
+              <Label htmlFor="time-limit">Time Limit (minutes)</Label>
+              <Input
+                id="time-limit"
+                type="number"
+                value={timeLimit}
+                onChange={(e) => setTimeLimit(e.target.value)}
+                placeholder="Optional for guest devices"
+                disabled={loading}
+              />
+            </div>
+          )}
         </div>
 
         {/* Footer Actions */}

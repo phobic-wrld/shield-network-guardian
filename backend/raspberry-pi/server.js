@@ -7,6 +7,7 @@
  *  ✅ Latency Monitor
  *  ✅ WebSocket Real-Time Broadcasts
  *  ✅ Device Block/Unblock + Authorization Events
+ *  ✅ Guest WiFi Management (time-limited access)
  *  ✅ Scheduler + Suspicious Device Alerts
  */
 
@@ -16,6 +17,7 @@ import cors from "cors";
 import { exec } from "child_process";
 import { WebSocketServer } from "ws";
 import deviceRoutes, { deviceEvents } from "./routes/deviceRoutes.js";
+import guestRoutes from "./routes/guestRoutes.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -24,9 +26,9 @@ const wss = new WebSocketServer({ server, path: "/network-stats" });
 app.use(cors());
 app.use(express.json());
 app.use("/api/devices", deviceRoutes);
+app.use("/api/guests", guestRoutes);
 
 // ======================= GLOBAL STATE =======================
-
 let clients = new Set();
 let latestStats = {
   downloadSpeed: 0,
@@ -36,32 +38,22 @@ let latestStats = {
 };
 
 // ======================= UTILITY FUNCTIONS =======================
-
-/**
- * 🧰 Run a shell command and return output
- */
 const runCommand = (cmd) =>
   new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
-      if (err) {
-        console.error(`❌ Command failed: ${cmd}\n${stderr}`);
-        return reject(err);
-      }
+      if (err) return reject(err);
       resolve(stdout.trim());
     });
   });
 
-/**
- * 🌐 Run internet speed test using speedtest-cli
- */
 async function runSpeedTest() {
   try {
-    const output = await runCommand("speedtest-cli --json");
+    const output = await runCommand("speedtest --format=json");
     const result = JSON.parse(output);
     return {
-      downloadSpeed: (result.download / 1e6).toFixed(2),
-      uploadSpeed: (result.upload / 1e6).toFixed(2),
-      ping: result.ping,
+      downloadSpeed: (result.download.bandwidth * 8 / 1e6).toFixed(2),
+      uploadSpeed: (result.upload.bandwidth * 8 / 1e6).toFixed(2),
+      ping: result.ping.latency,
       timestamp: new Date(),
     };
   } catch (err) {
@@ -70,9 +62,6 @@ async function runSpeedTest() {
   }
 }
 
-/**
- * 🕓 Measure average network latency
- */
 async function getLatency() {
   try {
     const output = await runCommand("ping -c 4 8.8.8.8");
@@ -84,16 +73,13 @@ async function getLatency() {
   }
 }
 
-/**
- * 📡 Scan connected devices via ARP
- */
 async function scanNetworkDevices() {
   try {
     const output = await runCommand("arp -a");
     const devices = output
       .split("\n")
-      .filter((line) => line.trim())
-      .map((line) => {
+      .filter(line => line.trim())
+      .map(line => {
         const ipMatch = line.match(/\b\d{1,3}(\.\d{1,3}){3}\b/);
         const macMatch = line.match(/([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})/);
         const hostnameMatch = line.match(/^([^\s]+)\s+\(/);
@@ -104,7 +90,7 @@ async function scanNetworkDevices() {
           lastSeen: new Date(),
         };
       })
-      .filter((d) => d.ip !== "unknown" && d.mac !== "unknown");
+      .filter(d => d.ip !== "unknown" && d.mac !== "unknown");
     return devices;
   } catch (err) {
     console.error("❌ Device scan error:", err.message);
@@ -112,79 +98,42 @@ async function scanNetworkDevices() {
   }
 }
 
-/**
- * 🚀 Update network speed & latency stats
- */
 async function updateLatestStats() {
   const speed = await runSpeedTest();
   const latency = await getLatency();
   latestStats = { ...speed, ping: latency.latency, timestamp: new Date() };
-
-  console.log(
-    `✅ Updated stats → ↓ ${latestStats.downloadSpeed} Mbps | ↑ ${latestStats.uploadSpeed} Mbps | Ping ${latestStats.ping} ms`
-  );
-
   broadcastToClients({ type: "stats_update", data: latestStats });
+  console.log(`✅ Updated stats → ↓ ${latestStats.downloadSpeed} Mbps | ↑ ${latestStats.uploadSpeed} Mbps | Ping ${latestStats.ping} ms`);
 }
 
-// Run initial speed test and repeat every 10 min
 updateLatestStats();
 setInterval(updateLatestStats, 10 * 60 * 1000);
 
 // ======================= EXPRESS ROUTES =======================
-
 app.get("/health", (_, res) => res.send("OK"));
-
 app.get("/api/network/stats", (_, res) => res.json(latestStats));
-
 app.get("/api/network/speedtest", async (_, res) => {
   const result = await runSpeedTest();
   latestStats = { ...latestStats, ...result };
   broadcastToClients({ type: "speedtest", data: result });
   res.json(result);
 });
-
 app.get("/api/network/scan", async (_, res) => {
   const devices = await scanNetworkDevices();
   broadcastToClients({ type: "device_scan", data: devices });
   res.json({ devices });
 });
 
-app.post("/api/network/suspicious-device", (req, res) => {
-  const { deviceInfo, threatScore } = req.body;
-  if (!deviceInfo?.mac)
-    return res.status(400).json({ error: "Missing device info" });
-
-  console.log(`⚠️ Suspicious Device:`, deviceInfo, "| Threat Score:", threatScore);
-
-  broadcastToClients({
-    type: "suspicious_device",
-    data: { deviceInfo, threatScore, timestamp: new Date() },
-  });
-
-  res.json({ success: true });
-});
-
 // ======================= WEBSOCKET HANDLER =======================
-
 wss.on("connection", (ws) => {
   clients.add(ws);
   console.log("🔗 WebSocket client connected");
-
   ws.send(JSON.stringify({ type: "initial_stats", data: latestStats }));
 
-  ws.on("message", async (msg) => {
+  ws.on("message", async msg => {
     const message = msg.toString();
-
-    if (message === "speedtest") {
-      const result = await runSpeedTest();
-      ws.send(JSON.stringify({ type: "speedtest", data: result }));
-    }
-
-    if (message === "scandevices") {
-      const devices = await scanNetworkDevices();
-      ws.send(JSON.stringify({ type: "device_scan", data: devices }));
-    }
+    if (message === "speedtest") ws.send(JSON.stringify({ type: "speedtest", data: await runSpeedTest() }));
+    if (message === "scandevices") ws.send(JSON.stringify({ type: "device_scan", data: await scanNetworkDevices() }));
   });
 
   ws.on("close", () => {
@@ -193,51 +142,25 @@ wss.on("connection", (ws) => {
   });
 });
 
-/**
- * 📢 Broadcast data to all connected clients
- */
 function broadcastToClients(data) {
   const msg = JSON.stringify(data);
-  clients.forEach((client) => {
+  clients.forEach(client => {
     if (client.readyState === 1) client.send(msg);
   });
 }
 
-/**
- * 🌐 Send periodic latency updates
- */
+// ======================= PERIODIC LATENCY UPDATE =======================
 setInterval(async () => {
   const latency = await getLatency();
   broadcastToClients({ type: "latency_update", data: latency });
 }, 30 * 1000);
 
 // ======================= DEVICE EVENT LISTENERS =======================
-
-deviceEvents.on("newDeviceAttempt", (device) => {
-  console.log(`📡 New device connection attempt: ${device.mac}`);
-  broadcastToClients({ type: "new_device_attempt", data: device });
-});
-
-deviceEvents.on("deviceBlocked", (device) => {
-  console.log(`🚫 Device blocked: ${device.mac}`);
-  broadcastToClients({ type: "device_blocked", data: device });
-});
-
-deviceEvents.on("deviceUnblocked", (device) => {
-  console.log(`✅ Device unblocked: ${device.mac}`);
-  broadcastToClients({ type: "device_unblocked", data: device });
-});
-
-deviceEvents.on("authorizationResolved", (event) => {
-  console.log(
-    `🔐 Authorization resolved → MAC: ${event.mac}, Action: ${event.action}, TimeLimit: ${event.timeLimit || "none"}`
-  );
-  broadcastToClients({ type: "authorization_resolved", data: event });
-});
+deviceEvents.on("newDeviceAttempt", device => broadcastToClients({ type: "new_device_attempt", data: device }));
+deviceEvents.on("deviceBlocked", device => broadcastToClients({ type: "device_blocked", data: device }));
+deviceEvents.on("deviceUnblocked", device => broadcastToClients({ type: "device_unblocked", data: device }));
+deviceEvents.on("authorizationResolved", event => broadcastToClients({ type: "authorization_resolved", data: event }));
 
 // ======================= START SERVER =======================
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`🚀 Shield Network Guardian (Pi) running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Shield Network Guardian (Pi) running on port ${PORT}`));

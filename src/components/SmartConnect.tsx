@@ -21,41 +21,55 @@ interface NetworkStat {
   timestamp?: string;
 }
 
-// ✅ Use environment variable
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
-const socket: Socket = io(BACKEND_URL);
+// ✅ Point directly to Raspberry Pi backend
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://192.168.100.11:3000";
+const socket: Socket = io(BACKEND_URL, {
+  transports: ["websocket"],
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,
+});
 
 export const SmartConnect = () => {
   const [isScanning, setIsScanning] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<"idle" | "scanning" | "completed">("idle");
+  const [connectionStatus, setConnectionStatus] = useState<
+    "idle" | "scanning" | "completed"
+  >("idle");
   const [stats, setStats] = useState<NetworkStat[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
     fetchStats();
 
-    // Listen for real-time updates
-    socket.off("stats:update"); // prevent duplicate listeners
+    // 🧠 Listen for real-time updates from backend
+    socket.off("stats:update");
     socket.on("stats:update", (newStat: NetworkStat) => {
       setStats((prev) => [newStat, ...prev.slice(0, 49)]);
     });
 
+    socket.on("connect_error", (err) => {
+      console.error("Socket connection failed:", err.message);
+    });
+
     return () => {
       socket.off("stats:update");
+      socket.disconnect();
     };
   }, []);
 
   const fetchStats = async () => {
     try {
-      const res = await axios.get<{ stats: NetworkStat[] }>(`${BACKEND_URL}/api/network/stats`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
+      const res = await axios.get<{ stats: NetworkStat[] }>(
+        `${BACKEND_URL}/api/network/stats`,
+        {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        }
+      );
       setStats(res.data.stats);
     } catch (err) {
-      console.error("Failed to fetch stats:", err);
+      console.error("❌ Failed to fetch stats:", err);
       toast({
-        title: "Error",
-        description: "Unable to fetch network statistics.",
+        title: "Error Fetching Stats",
+        description: "Unable to reach Raspberry Pi backend.",
         variant: "destructive",
       });
     }
@@ -66,6 +80,7 @@ export const SmartConnect = () => {
     setConnectionStatus("scanning");
 
     try {
+      // Generate mock test data for quick simulation
       const mockData: NetworkStat = {
         throughputMbps: Math.floor(Math.random() * 100) + 20,
         latencyMs: Math.floor(Math.random() * 50) + 5,
@@ -78,15 +93,15 @@ export const SmartConnect = () => {
 
       toast({
         title: "Network Updated",
-        description: "New network statistics have been recorded.",
+        description: "New network statistics have been recorded successfully.",
       });
 
       setConnectionStatus("completed");
     } catch (err) {
-      console.error("Failed to post network update:", err);
+      console.error("❌ Failed to post network update:", err);
       toast({
-        title: "Error",
-        description: "Failed to post network update.",
+        title: "Update Failed",
+        description: "Could not send new stats to Raspberry Pi.",
         variant: "destructive",
       });
       setConnectionStatus("idle");

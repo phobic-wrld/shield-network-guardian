@@ -9,8 +9,6 @@ import {
   resolveAuthorizationRequest,
 } from "../controllers/deviceController.js";
 import { EventEmitter } from "events";
-import fs from "fs";
-import path from "path";
 
 const router = express.Router();
 export const deviceEvents = new EventEmitter();
@@ -61,7 +59,7 @@ router.get("/:mac", (req, res) => {
   const mac = req.params.mac?.toLowerCase();
   if (!mac) return res.status(400).json({ error: "MAC address required" });
 
-  const cacheFile = path.resolve("./device-cache.json");
+  const cacheFile = "./device-cache.json";
   if (!fs.existsSync(cacheFile))
     return res.status(404).json({ error: "No cache file found" });
 
@@ -73,16 +71,13 @@ router.get("/:mac", (req, res) => {
 });
 
 /* ---------------------------------------------
-   🚨 Alert route (frontend -> backend)
-   Used for new connection attempts
+   🚨 Alert route for new connection attempts
 ---------------------------------------------- */
 router.post("/alert", (req, res) => {
   const { mac, ip, name } = req.body;
   console.log(`🚨 ALERT: New device ${name || "Unknown"} (${mac}) at ${ip}`);
 
   deviceEvents.emit("newDeviceAttempt", { mac, ip, name, time: new Date() });
-
-  // In future: integrate WebSocket/Telegram/Email notifications
   res.json({ message: "Alert received" });
 });
 
@@ -101,11 +96,13 @@ router.post("/authorize", handleAuthorizationRequest);
    Optional: { mac, action, timeLimit }
 ---------------------------------------------- */
 router.post("/resolve", async (req, res) => {
+  const { mac, action, timeLimit } = req.body;
+  if (!mac || !action)
+    return res.status(400).json({ error: "MAC and action required" });
+
   try {
     await resolveAuthorizationRequest(req, res);
-    const { mac, action, timeLimit } = req.body;
 
-    // Emit event for UI live updates
     deviceEvents.emit("authorizationResolved", {
       mac,
       action,
