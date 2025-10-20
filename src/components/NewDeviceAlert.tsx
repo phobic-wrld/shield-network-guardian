@@ -11,13 +11,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tablet, Shield } from "lucide-react";
+import { Tablet, Shield, Ban } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 
 export interface Device {
-  mac: string; // always string
+  mac: string;
   ip: string;
   name?: string;
   vendor?: string;
@@ -35,70 +35,88 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
   const [deviceName, setDeviceName] = useState("");
   const [owner, setOwner] = useState("Me");
   const [isGuest, setIsGuest] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const API_BASE = import.meta.env.VITE_API_URL + "/api/devices";
 
+  // Reset form whenever a new device is shown
   useEffect(() => {
-    if (!device) return;
-    setDeviceName(device.name || "");
-    setOwner("Me");
-    setIsGuest(false);
+    if (device) {
+      setDeviceName(device.name || "");
+      setOwner("Me");
+      setIsGuest(false);
+    }
   }, [device]);
 
   const hasValidMAC = !!device?.mac;
 
-  const handleSave = async () => {
+  /**
+   * ✅ Authorize device (mark as trusted)
+   */
+  const handleAuthorize = async () => {
     if (!device || !hasValidMAC) return;
+
     try {
-      await axios.post(`${API_BASE}/alert`, {
+      setLoading(true);
+      await axios.post(`${API_BASE}/authorize`, {
         mac: device.mac,
         ip: device.ip,
-        name: deviceName || device.name || "Unknown Device",
-        owner,
+        name: deviceName.trim() || device.name || "Unnamed Device",
+        owner: owner.trim() || "Unknown",
         isGuest,
       });
 
       toast({
-        title: "Device Saved",
-        description: `${deviceName || device.name} added to network.`,
+        title: "✅ Device Authorized",
+        description: `${deviceName || device.name || "Device"} added to trusted list.`,
       });
 
-      onOpenChange(false);
       queryClient.invalidateQueries(["devices"]);
+      onOpenChange(false);
     } catch (err) {
       console.error(err);
       toast({
-        title: "Save Failed",
-        description: "Unable to save device information.",
+        title: "Authorization Failed",
+        description: "Unable to authorize this device. Check your connection.",
         variant: "destructive",
       });
+    } finally {
+      setLoading(false);
     }
   };
 
+  /**
+   * 🚫 Block device (deny access)
+   */
   const handleBlock = async () => {
     if (!device || !hasValidMAC) return;
+
     try {
+      setLoading(true);
       await axios.post(`${API_BASE}/block`, { mac: device.mac });
 
       toast({
-        title: "Device Blocked",
-        description: `${deviceName || device.name} blocked successfully.`,
+        title: "🚫 Device Blocked",
+        description: `${deviceName || device.name || "Device"} has been disconnected and blocked.`,
       });
 
-      onOpenChange(false);
       queryClient.invalidateQueries(["devices"]);
+      onOpenChange(false);
     } catch (err) {
       console.error(err);
       toast({
         title: "Block Failed",
-        description: "Unable to block this device.",
+        description: "Unable to block this device. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setLoading(false);
     }
   };
 
+  // Early return if no device data
   if (!device) return null;
 
   return (
@@ -108,12 +126,13 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
           <div className="h-12 w-12 rounded-full bg-amber-100 flex items-center justify-center mb-4">
             <Tablet className="h-6 w-6 text-amber-600" />
           </div>
-          <AlertDialogTitle>New Device Detected</AlertDialogTitle>
+          <AlertDialogTitle>New Device Attempting to Connect</AlertDialogTitle>
           <AlertDialogDescription>
-            A new device connected to your network. Save or block it immediately.
+            A new device is trying to connect to your Wi-Fi. Authorize it or block it immediately.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
+        {/* Device Info */}
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label>Device Information</Label>
@@ -122,20 +141,22 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
                 <div className="text-muted-foreground">MAC Address:</div>
                 <div>{device.mac || "N/A"}</div>
                 <div className="text-muted-foreground">IP Address:</div>
-                <div>{device.ip}</div>
+                <div>{device.ip || "N/A"}</div>
                 <div className="text-muted-foreground">Vendor:</div>
                 <div>{device.vendor || "Unknown"}</div>
               </div>
             </div>
           </div>
 
+          {/* Editable Fields */}
           <div className="space-y-2">
             <Label htmlFor="device-name">Device Name</Label>
             <Input
               id="device-name"
               value={deviceName}
               onChange={(e) => setDeviceName(e.target.value)}
-              placeholder="Enter a name for this device"
+              placeholder="Enter device name (e.g., Grace’s iPhone)"
+              disabled={loading}
             />
           </div>
 
@@ -145,7 +166,8 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
               id="owner"
               value={owner}
               onChange={(e) => setOwner(e.target.value)}
-              placeholder="e.g., Grace’s Phone"
+              placeholder="e.g., Grace"
+              disabled={loading}
             />
           </div>
 
@@ -156,6 +178,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
               checked={isGuest}
               onChange={(e) => setIsGuest(e.target.checked)}
               className="form-checkbox h-4 w-4"
+              disabled={loading}
             />
             <Label htmlFor="guest-device" className="cursor-pointer">
               Mark as guest device
@@ -163,21 +186,24 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
           </div>
         </div>
 
+        {/* Footer Actions */}
         <AlertDialogFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
-          <AlertDialogCancel>Dismiss</AlertDialogCancel>
+          <AlertDialogCancel disabled={loading}>Dismiss</AlertDialogCancel>
+
           <AlertDialogAction
             onClick={handleBlock}
-            className="bg-destructive hover:bg-destructive/90"
-            disabled={!hasValidMAC}
+            className="bg-destructive text-white hover:bg-destructive/90 flex items-center gap-2"
+            disabled={!hasValidMAC || loading}
           >
-            Block Device
+            <Ban className="h-4 w-4" /> {loading ? "Blocking..." : "Block"}
           </AlertDialogAction>
+
           <AlertDialogAction
-            onClick={handleSave}
-            className="bg-primary flex items-center gap-2"
-            disabled={!hasValidMAC}
+            onClick={handleAuthorize}
+            className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2"
+            disabled={!hasValidMAC || loading}
           >
-            <Shield className="h-4 w-4" /> Save Device
+            <Shield className="h-4 w-4" /> {loading ? "Authorizing..." : "Authorize"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

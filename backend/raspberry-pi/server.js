@@ -1,12 +1,13 @@
 /**
  * 🖥️ Shield Network Guardian – Raspberry Pi Server
+ * --------------------------------------------------
  * Features:
  *  ✅ Speedtest (Download, Upload, Ping)
  *  ✅ Device Scan with Hostnames
  *  ✅ Latency Monitor
  *  ✅ WebSocket Real-Time Broadcasts
- *  ✅ Integrated Device Block/Unblock Notifications
- *  ✅ Scheduler + Alert System
+ *  ✅ Device Block/Unblock + Authorization Events
+ *  ✅ Scheduler + Suspicious Device Alerts
  */
 
 import express from "express";
@@ -37,13 +38,16 @@ let latestStats = {
 // ======================= UTILITY FUNCTIONS =======================
 
 /**
- * Run a shell command and return output
+ * 🧰 Run a shell command and return output
  */
 const runCommand = (cmd) =>
   new Promise((resolve, reject) => {
-    exec(cmd, (err, stdout) => {
-      if (err) return reject(err);
-      resolve(stdout);
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error(`❌ Command failed: ${cmd}\n${stderr}`);
+        return reject(err);
+      }
+      resolve(stdout.trim());
     });
   });
 
@@ -55,8 +59,8 @@ async function runSpeedTest() {
     const output = await runCommand("speedtest-cli --json");
     const result = JSON.parse(output);
     return {
-      downloadSpeed: result.download / 1e6,
-      uploadSpeed: result.upload / 1e6,
+      downloadSpeed: (result.download / 1e6).toFixed(2),
+      uploadSpeed: (result.upload / 1e6).toFixed(2),
       ping: result.ping,
       timestamp: new Date(),
     };
@@ -117,9 +121,7 @@ async function updateLatestStats() {
   latestStats = { ...speed, ping: latency.latency, timestamp: new Date() };
 
   console.log(
-    `✅ Updated stats → ↓ ${latestStats.downloadSpeed.toFixed(2)} Mbps | ↑ ${latestStats.uploadSpeed.toFixed(
-      2
-    )} Mbps | Ping ${latestStats.ping} ms`
+    `✅ Updated stats → ↓ ${latestStats.downloadSpeed} Mbps | ↑ ${latestStats.uploadSpeed} Mbps | Ping ${latestStats.ping} ms`
   );
 
   broadcastToClients({ type: "stats_update", data: latestStats });
@@ -144,7 +146,7 @@ app.get("/api/network/speedtest", async (_, res) => {
 
 app.get("/api/network/scan", async (_, res) => {
   const devices = await scanNetworkDevices();
-  broadcastToClients({ type: "device_scan", devices });
+  broadcastToClients({ type: "device_scan", data: devices });
   res.json({ devices });
 });
 
@@ -157,9 +159,7 @@ app.post("/api/network/suspicious-device", (req, res) => {
 
   broadcastToClients({
     type: "suspicious_device",
-    deviceInfo,
-    threatScore,
-    timestamp: new Date(),
+    data: { deviceInfo, threatScore, timestamp: new Date() },
   });
 
   res.json({ success: true });
@@ -183,7 +183,7 @@ wss.on("connection", (ws) => {
 
     if (message === "scandevices") {
       const devices = await scanNetworkDevices();
-      ws.send(JSON.stringify({ type: "device_scan", devices }));
+      ws.send(JSON.stringify({ type: "device_scan", data: devices }));
     }
   });
 
@@ -208,7 +208,7 @@ function broadcastToClients(data) {
  */
 setInterval(async () => {
   const latency = await getLatency();
-  broadcastToClients({ type: "latency", data: latency });
+  broadcastToClients({ type: "latency_update", data: latency });
 }, 30 * 1000);
 
 // ======================= DEVICE EVENT LISTENERS =======================
@@ -226,6 +226,13 @@ deviceEvents.on("deviceBlocked", (device) => {
 deviceEvents.on("deviceUnblocked", (device) => {
   console.log(`✅ Device unblocked: ${device.mac}`);
   broadcastToClients({ type: "device_unblocked", data: device });
+});
+
+deviceEvents.on("authorizationResolved", (event) => {
+  console.log(
+    `🔐 Authorization resolved → MAC: ${event.mac}, Action: ${event.action}, TimeLimit: ${event.timeLimit || "none"}`
+  );
+  broadcastToClients({ type: "authorization_resolved", data: event });
 });
 
 // ======================= START SERVER =======================

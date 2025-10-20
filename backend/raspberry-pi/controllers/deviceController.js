@@ -8,13 +8,9 @@ const require = createRequire(import.meta.url);
 const oui = require("oui");
 
 const CACHE_FILE = path.resolve("./device-cache.json");
-
-// Temporary in-memory store for new device connection requests
 let pendingRequests = [];
 
-/**
- * 🧠 Load previous device state from cache
- */
+/* 🧠 Load and Save Cache */
 const loadCache = () => {
   try {
     if (fs.existsSync(CACHE_FILE)) {
@@ -25,10 +21,6 @@ const loadCache = () => {
   }
   return {};
 };
-
-/**
- * 💾 Save device state to cache
- */
 const saveCache = (data) => {
   try {
     fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
@@ -37,44 +29,109 @@ const saveCache = (data) => {
   }
 };
 
-/**
- * 🧩 Categorize devices based on vendor/name
- */
+/* 🧩 Categorize device type */
 const categorizeDevice = (vendor, name) => {
   const v = `${vendor} ${name}`.toLowerCase();
   if (v.includes("iphone") || v.includes("android") || v.includes("samsung"))
     return "Phone";
-  if (
-    v.includes("intel") ||
-    v.includes("hp") ||
-    v.includes("dell") ||
-    v.includes("lenovo")
-  )
+  if (v.includes("intel") || v.includes("hp") || v.includes("dell") || v.includes("lenovo"))
     return "Laptop";
-  if (
-    v.includes("lg") ||
-    v.includes("tv") ||
-    v.includes("smart tv") ||
-    v.includes("samsung tv")
-  )
+  if (v.includes("lg") || v.includes("tv") || v.includes("smart tv") || v.includes("samsung tv"))
     return "TV";
   return "Other";
 };
 
-/**
- * 🛰️ Get all connected devices on the network
- */
+/* ⚙️ System Commands */
+const runCommand = (cmd) =>
+  new Promise((resolve, reject) => {
+    exec(cmd, (error, stdout, stderr) => {
+      if (error) {
+        console.error(`⚠️ Command failed: ${error.message}`);
+        return reject(stderr);
+      }
+      resolve(stdout);
+    });
+  });
+
+/* 🚫 Block Device */
+export const blockDevice = async (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC address required" });
+
+  const cmd = `
+    sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
+    sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
+    sudo hostapd_cli deauthenticate ${mac} || true;
+  `;
+
+  try {
+    await runCommand(cmd);
+    const cache = loadCache();
+    if (!cache[mac]) cache[mac] = {};
+    cache[mac].blocked = true;
+    saveCache(cache);
+    console.log(`🚫 Device blocked: ${mac}`);
+    res.json({ message: `Device ${mac} blocked successfully` });
+  } catch {
+    res.status(500).json({ error: "Failed to block device" });
+  }
+};
+
+/* ✅ Unblock Device */
+export const unblockDevice = async (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC address required" });
+
+  const cmd = `
+    sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
+    sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
+  `;
+
+  try {
+    await runCommand(cmd);
+    const cache = loadCache();
+    if (!cache[mac]) cache[mac] = {};
+    cache[mac].blocked = false;
+    saveCache(cache);
+    console.log(`✅ Device unblocked: ${mac}`);
+    res.json({ message: `Device ${mac} unblocked successfully` });
+  } catch {
+    res.status(500).json({ error: "Failed to unblock device" });
+  }
+};
+
+/* 🕒 Auto-block device after specific duration */
+export const scheduleBlock = (mac, minutes) => {
+  console.log(`⏳ Scheduling ${mac} to be blocked after ${minutes} minutes...`);
+  setTimeout(async () => {
+    try {
+      await runCommand(`
+        sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
+        sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
+        sudo hostapd_cli deauthenticate ${mac} || true;
+      `);
+      const cache = loadCache();
+      if (!cache[mac]) cache[mac] = {};
+      cache[mac].blocked = true;
+      saveCache(cache);
+      console.log(`🕓 Auto-blocked ${mac} after ${minutes} minutes`);
+    } catch (err) {
+      console.error(`❌ Failed to auto-block ${mac}:`, err);
+    }
+  }, minutes * 60 * 1000);
+};
+
+/* 🛰️ Get connected devices */
 export const getConnectedDevices = (req, res) => {
   exec("sudo arp-scan --interface=wlan0 --localnet", (error, stdout, stderr) => {
     if (error) {
-      console.error("❌ Error running arp-scan:", error);
-      console.error(stderr);
+      console.error("❌ arp-scan failed:", stderr);
       return res.status(500).json({ error: "Failed to scan network" });
     }
 
     const lines = stdout.split("\n");
-    const devices = [];
     const cache = loadCache();
+    const devices = [];
 
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
@@ -83,7 +140,6 @@ export const getConnectedDevices = (req, res) => {
         const mac = parts[1].toLowerCase();
         const rawName = parts.slice(2).join(" ").trim();
 
-        // ✅ Vendor Lookup
         let vendor = "Unknown";
         try {
           const lookup = oui(mac);
@@ -93,7 +149,6 @@ export const getConnectedDevices = (req, res) => {
         }
 
         const deviceType = categorizeDevice(vendor, rawName);
-
         const device = {
           ip,
           mac,
@@ -105,94 +160,24 @@ export const getConnectedDevices = (req, res) => {
           blocked: cache[mac]?.blocked || false,
         };
 
-        // ✅ Add to devices array
         devices.push(device);
-
-        // ✅ Update cache
         cache[mac] = device;
       }
     }
 
-    // 💤 Mark cached devices as offline if not seen this scan
+    // Mark cached devices as offline if missing
     for (const mac in cache) {
       if (!devices.find((d) => d.mac === mac)) {
         cache[mac].status = "offline";
       }
     }
 
-    // 💾 Save updated cache
     saveCache(cache);
-
-    // 🔄 Merge online + offline
-    const allDevices = Object.values(cache);
-
-    // 🔠 Sort alphabetically
-    allDevices.sort((a, b) => a.name.localeCompare(b.name));
-
-    res.json(allDevices);
+    res.json(Object.values(cache).sort((a, b) => a.name.localeCompare(b.name)));
   });
 };
 
-/**
- * 🚫 Block a device by MAC address
- */
-export const blockDevice = (req, res) => {
-  const { mac } = req.body;
-  if (!mac) return res.status(400).json({ error: "MAC address required" });
-
-  const blockCommand = `
-    sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP &&
-    sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP &&
-    sudo hostapd_cli deauthenticate ${mac} || true
-  `;
-
-  exec(blockCommand, (error) => {
-    if (error) {
-      console.error("❌ Error blocking device:", error);
-      return res.status(500).json({ error: "Failed to block device" });
-    }
-
-    console.log(`🚫 Blocked device: ${mac}`);
-
-    const cache = loadCache();
-    if (cache[mac]) cache[mac].blocked = true;
-    saveCache(cache);
-
-    res.json({ message: `Device ${mac} blocked successfully` });
-  });
-};
-
-/**
- * ✅ Unblock a device by MAC address
- */
-export const unblockDevice = (req, res) => {
-  const { mac } = req.body;
-  if (!mac) return res.status(400).json({ error: "MAC address required" });
-
-  const unblockCommand = `
-    sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP &&
-    sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP
-  `;
-
-  exec(unblockCommand, (error) => {
-    if (error) {
-      console.error("❌ Error unblocking device:", error);
-      return res.status(500).json({ error: "Failed to unblock device" });
-    }
-
-    console.log(`✅ Unblocked device: ${mac}`);
-
-    const cache = loadCache();
-    if (cache[mac]) cache[mac].blocked = false;
-    saveCache(cache);
-
-    res.json({ message: `Device ${mac} unblocked successfully` });
-  });
-};
-
-/**
- * 📥 Handle authorization requests from monitor
- */
+/* 📥 Handle authorization requests */
 export const handleAuthorizationRequest = (req, res) => {
   const { mac } = req.body;
   if (!mac) return res.status(400).json({ error: "MAC address required" });
@@ -203,53 +188,52 @@ export const handleAuthorizationRequest = (req, res) => {
       timestamp: new Date().toISOString(),
       status: "pending",
     });
-    console.log(`🔔 New authorization request from ${mac}`);
+    console.log(`🔔 Authorization request from: ${mac}`);
   }
 
   res.json({ message: "Authorization request received", mac });
 };
 
-/**
- * ✅ Approve or 🚫 Deny pending requests
- */
+/* 🟢 Approve / 🔴 Deny authorization */
 export const resolveAuthorizationRequest = (req, res) => {
-  const { mac, action } = req.body;
+  const { mac, action, timeLimit } = req.body;
   if (!mac || !action)
     return res.status(400).json({ error: "MAC and action required" });
 
   const index = pendingRequests.findIndex((r) => r.mac === mac);
-  if (index === -1)
-    return res.status(404).json({ error: "Request not found" });
+  if (index === -1) return res.status(404).json({ error: "Request not found" });
 
   const request = pendingRequests[index];
-  request.status = action === "approve" ? "approved" : "blocked";
-
   pendingRequests.splice(index, 1);
 
-  if (action === "approve") {
-    exec(
-      `sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP && sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP`,
-      (error) => {
-        if (error) console.error("❌ Error approving device:", error);
-      }
-    );
-    console.log(`✅ Approved device ${mac}`);
-  } else {
-    exec(
-      `sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP && sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP && sudo hostapd_cli deauthenticate ${mac} || true`,
-      (error) => {
-        if (error) console.error("❌ Error blocking device:", error);
-      }
-    );
-    console.log(`🚫 Blocked device ${mac}`);
+  const approveCmd = `
+    sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
+    sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
+  `;
+  const blockCmd = `
+    sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
+    sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
+    sudo hostapd_cli deauthenticate ${mac} || true;
+  `;
+
+  exec(action === "approve" ? approveCmd : blockCmd, (error) => {
+    if (error) console.warn(`⚠️ ${action} command warning for ${mac}: ${error.message}`);
+  });
+
+  const cache = loadCache();
+  if (!cache[mac]) cache[mac] = {};
+  cache[mac].blocked = action !== "approve";
+  saveCache(cache);
+
+  if (action === "approve" && timeLimit) {
+    scheduleBlock(mac, timeLimit); // auto block after minutes
   }
 
+  console.log(`${action === "approve" ? "✅ Approved" : "🚫 Blocked"} device ${mac}`);
   res.json({ message: `Device ${mac} ${action}ed successfully` });
 };
 
-/**
- * 📋 Get all pending authorization requests
- */
+/* 📋 Get pending authorization requests */
 export const getPendingRequests = (req, res) => {
   res.json(pendingRequests);
 };
