@@ -46,15 +46,20 @@ const runCommand = (cmd) =>
     });
   });
 
+/**
+ * ✅ Run speedtest via shield-venv speedtest-cli
+ */
 async function runSpeedTest() {
   try {
-    const output = await runCommand("speedtest --format=json");
+    // Use the virtual environment path explicitly
+    const output = await runCommand("~/shield-venv/bin/speedtest-cli --json");
     const result = JSON.parse(output);
+
     return {
-      downloadSpeed: (result.download.bandwidth * 8 / 1e6).toFixed(2),
-      uploadSpeed: (result.upload.bandwidth * 8 / 1e6).toFixed(2),
-      ping: result.ping.latency,
-      timestamp: new Date(),
+      downloadSpeed: +(result.download / 1e6).toFixed(2), // Mbps
+      uploadSpeed: +(result.upload / 1e6).toFixed(2),     // Mbps
+      ping: result.ping,
+      timestamp: new Date(result.timestamp),
     };
   } catch (err) {
     console.error("❌ Speedtest error:", err.message);
@@ -62,6 +67,9 @@ async function runSpeedTest() {
   }
 }
 
+/**
+ * 🟢 Ping Google DNS for latency
+ */
 async function getLatency() {
   try {
     const output = await runCommand("ping -c 4 8.8.8.8");
@@ -73,6 +81,9 @@ async function getLatency() {
   }
 }
 
+/**
+ * 🖧 Scan network devices
+ */
 async function scanNetworkDevices() {
   try {
     const output = await runCommand("arp -a");
@@ -98,26 +109,35 @@ async function scanNetworkDevices() {
   }
 }
 
+/**
+ * 🔄 Update stats and broadcast to clients
+ */
 async function updateLatestStats() {
   const speed = await runSpeedTest();
   const latency = await getLatency();
   latestStats = { ...speed, ping: latency.latency, timestamp: new Date() };
   broadcastToClients({ type: "stats_update", data: latestStats });
-  console.log(`✅ Updated stats → ↓ ${latestStats.downloadSpeed} Mbps | ↑ ${latestStats.uploadSpeed} Mbps | Ping ${latestStats.ping} ms`);
+
+  console.log(
+    `✅ Updated stats → ↓ ${latestStats.downloadSpeed} Mbps | ↑ ${latestStats.uploadSpeed} Mbps | Ping ${latestStats.ping} ms`
+  );
 }
 
+// Initial update + periodic refresh
 updateLatestStats();
-setInterval(updateLatestStats, 10 * 60 * 1000);
+setInterval(updateLatestStats, 10 * 60 * 1000); // every 10 min
 
 // ======================= EXPRESS ROUTES =======================
 app.get("/health", (_, res) => res.send("OK"));
 app.get("/api/network/stats", (_, res) => res.json(latestStats));
+
 app.get("/api/network/speedtest", async (_, res) => {
   const result = await runSpeedTest();
   latestStats = { ...latestStats, ...result };
   broadcastToClients({ type: "speedtest", data: result });
   res.json(result);
 });
+
 app.get("/api/network/scan", async (_, res) => {
   const devices = await scanNetworkDevices();
   broadcastToClients({ type: "device_scan", data: devices });
@@ -128,12 +148,16 @@ app.get("/api/network/scan", async (_, res) => {
 wss.on("connection", (ws) => {
   clients.add(ws);
   console.log("🔗 WebSocket client connected");
+
+  // Send initial stats
   ws.send(JSON.stringify({ type: "initial_stats", data: latestStats }));
 
-  ws.on("message", async msg => {
+  ws.on("message", async (msg) => {
     const message = msg.toString();
-    if (message === "speedtest") ws.send(JSON.stringify({ type: "speedtest", data: await runSpeedTest() }));
-    if (message === "scandevices") ws.send(JSON.stringify({ type: "device_scan", data: await scanNetworkDevices() }));
+    if (message === "speedtest")
+      ws.send(JSON.stringify({ type: "speedtest", data: await runSpeedTest() }));
+    if (message === "scandevices")
+      ws.send(JSON.stringify({ type: "device_scan", data: await scanNetworkDevices() }));
   });
 
   ws.on("close", () => {
@@ -142,9 +166,12 @@ wss.on("connection", (ws) => {
   });
 });
 
+/**
+ * Broadcast message to all connected WebSocket clients
+ */
 function broadcastToClients(data) {
   const msg = JSON.stringify(data);
-  clients.forEach(client => {
+  clients.forEach((client) => {
     if (client.readyState === 1) client.send(msg);
   });
 }
@@ -153,14 +180,24 @@ function broadcastToClients(data) {
 setInterval(async () => {
   const latency = await getLatency();
   broadcastToClients({ type: "latency_update", data: latency });
-}, 30 * 1000);
+}, 30 * 1000); // every 30 sec
 
 // ======================= DEVICE EVENT LISTENERS =======================
-deviceEvents.on("newDeviceAttempt", device => broadcastToClients({ type: "new_device_attempt", data: device }));
-deviceEvents.on("deviceBlocked", device => broadcastToClients({ type: "device_blocked", data: device }));
-deviceEvents.on("deviceUnblocked", device => broadcastToClients({ type: "device_unblocked", data: device }));
-deviceEvents.on("authorizationResolved", event => broadcastToClients({ type: "authorization_resolved", data: event }));
+deviceEvents.on("newDeviceAttempt", (device) =>
+  broadcastToClients({ type: "new_device_attempt", data: device })
+);
+deviceEvents.on("deviceBlocked", (device) =>
+  broadcastToClients({ type: "device_blocked", data: device })
+);
+deviceEvents.on("deviceUnblocked", (device) =>
+  broadcastToClients({ type: "device_unblocked", data: device })
+);
+deviceEvents.on("authorizationResolved", (event) =>
+  broadcastToClients({ type: "authorization_resolved", data: event })
+);
 
 // ======================= START SERVER =======================
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Shield Network Guardian (Pi) running on port ${PORT}`));
+server.listen(PORT, () =>
+  console.log(`🚀 Shield Network Guardian (Pi) running on port ${PORT}`)
+);
