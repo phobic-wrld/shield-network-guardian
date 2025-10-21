@@ -3,15 +3,15 @@ import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
-import { deviceEvents } from "../routes/deviceRoutes.js"; // adjust path if needed
+import { deviceEvents } from "../routes/deviceRoutes.js";
 
 const require = createRequire(import.meta.url);
 const oui = require("oui");
 
-const CACHE_FILE = path.resolve("./data/device-cache.json"); 
+const CACHE_FILE = path.resolve("./data/device-cache.json");
 let pendingRequests = [];
 
-/* 🧠 Load and Save Cache */
+/* 🧠 Load & Save Cache */
 const loadCache = () => {
   try {
     if (fs.existsSync(CACHE_FILE)) {
@@ -22,6 +22,7 @@ const loadCache = () => {
   }
   return {};
 };
+
 const saveCache = (data) => {
   try {
     fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
@@ -30,7 +31,7 @@ const saveCache = (data) => {
   }
 };
 
-/* 🧩 Categorize device type */
+/* 🧩 Categorize Device */
 const categorizeDevice = (vendor, name) => {
   const v = `${vendor} ${name}`.toLowerCase();
   if (v.includes("iphone") || v.includes("android") || v.includes("samsung")) return "Phone";
@@ -39,7 +40,7 @@ const categorizeDevice = (vendor, name) => {
   return "Other";
 };
 
-/* ⚙️ Run system commands */
+/* ⚙️ Run System Command */
 const runCommand = (cmd) =>
   new Promise((resolve, reject) => {
     exec(cmd, (error, stdout, stderr) => {
@@ -48,86 +49,12 @@ const runCommand = (cmd) =>
     });
   });
 
-/* 🚫 Block Device */
-export const blockDevice = async (req, res) => {
-  const { mac } = req.body;
-  if (!mac) return res.status(400).json({ error: "MAC address required" });
-
-  const cmd = `
-    sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
-    sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
-    sudo hostapd_cli -i wlan0 deauthenticate ${mac} || true;
-  `;
-
+/* 🛰️ Get Connected Devices (Internal Helper) */
+const getConnectedDevicesInternal = async () => {
+  const cache = loadCache();
   try {
-    await runCommand(cmd);
-    const cache = loadCache();
-    cache[mac] = { ...(cache[mac] || {}), blocked: true };
-    saveCache(cache);
-
-    console.log(`🚫 Device blocked: ${mac}`);
-    deviceEvents.emit("deviceBlocked", { mac });
-    res.json({ message: `Device ${mac} blocked successfully` });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to block device" });
-  }
-};
-
-/* ✅ Unblock Device */
-export const unblockDevice = async (req, res) => {
-  const { mac } = req.body;
-  if (!mac) return res.status(400).json({ error: "MAC address required" });
-
-  const cmd = `
-    sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
-    sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
-  `;
-
-  try {
-    await runCommand(cmd);
-    const cache = loadCache();
-    cache[mac] = { ...(cache[mac] || {}), blocked: false };
-    saveCache(cache);
-
-    console.log(`✅ Device unblocked: ${mac}`);
-    deviceEvents.emit("deviceUnblocked", { mac });
-    res.json({ message: `Device ${mac} unblocked successfully` });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to unblock device" });
-  }
-};
-
-/* 🕒 Schedule auto-block (for guests) */
-export const scheduleBlock = (mac, minutes) => {
-  console.log(`⏳ Scheduling ${mac} to be blocked after ${minutes} minutes...`);
-  setTimeout(async () => {
-    try {
-      await runCommand(`
-        sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
-        sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
-        sudo hostapd_cli -i wlan0 deauthenticate ${mac} || true;
-      `);
-      const cache = loadCache();
-      cache[mac] = { ...(cache[mac] || {}), blocked: true };
-      saveCache(cache);
-
-      console.log(`🕓 Auto-blocked ${mac} after ${minutes} minutes`);
-      deviceEvents.emit("deviceBlocked", { mac });
-    } catch (err) {
-      console.error(`❌ Failed to auto-block ${mac}:`, err);
-    }
-  }, minutes * 60 * 1000);
-};
-
-/* 🛰️ Scan connected devices */
-export const getConnectedDevices = (req, res) => {
-  exec("sudo arp-scan --interface=wlan0 --localnet", (error, stdout, stderr) => {
-    if (error) return res.status(500).json({ error: "Failed to scan network" });
-
-    const lines = stdout.split("\n");
-    const cache = loadCache();
+    const output = await runCommand("sudo arp-scan --interface=wlan0 --localnet");
+    const lines = output.split("\n");
     const devices = [];
 
     for (const line of lines) {
@@ -163,59 +90,132 @@ export const getConnectedDevices = (req, res) => {
     }
 
     saveCache(cache);
-    res.json(Object.values(cache).sort((a, b) => a.name.localeCompare(b.name)));
-  });
+    return Object.values(cache).sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    console.error("❌ Failed to scan devices:", err);
+    return Object.values(cache);
+  }
 };
 
-/* 📥 Authorization Requests */
+/* 🚫 Block Device */
+export const blockDevice = async (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC required" });
+
+  try {
+    await runCommand(`sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP`);
+    await runCommand(`sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP`);
+    await runCommand(`sudo hostapd_cli -i wlan0 deauthenticate ${mac}`);
+
+    const cache = loadCache();
+    cache[mac] = { ...(cache[mac] || {}), blocked: true };
+    saveCache(cache);
+
+    console.log(`🚫 Device blocked: ${mac}`);
+    deviceEvents.emit("deviceBlocked", { mac });
+
+    // Broadcast updated device list
+    const devices = await getConnectedDevicesInternal();
+    deviceEvents.emit("device_scan", devices);
+
+    res.json({ message: `Device ${mac} blocked successfully` });
+  } catch (err) {
+    console.error("❌ Block device error:", err);
+    res.status(500).json({ error: "Failed to block device" });
+  }
+};
+
+/* ✅ Unblock Device */
+export const unblockDevice = async (req, res) => {
+  const { mac } = req.body;
+  if (!mac) return res.status(400).json({ error: "MAC required" });
+
+  try {
+    await runCommand(`sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP`);
+    await runCommand(`sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP`);
+
+    const cache = loadCache();
+    cache[mac] = { ...(cache[mac] || {}), blocked: false };
+    saveCache(cache);
+
+    console.log(`✅ Device unblocked: ${mac}`);
+    deviceEvents.emit("deviceUnblocked", { mac });
+
+    // Broadcast updated device list
+    const devices = await getConnectedDevicesInternal();
+    deviceEvents.emit("device_scan", devices);
+
+    res.json({ message: `Device ${mac} unblocked successfully` });
+  } catch (err) {
+    console.error("❌ Unblock device error:", err);
+    res.status(500).json({ error: "Failed to unblock device" });
+  }
+};
+
+/* 🕒 Schedule Auto-Block */
+export const scheduleBlock = (mac, minutes) => {
+  console.log(`⏳ Scheduling ${mac} to be blocked after ${minutes} minutes`);
+  setTimeout(() => blockDevice({ body: { mac } }, { json: () => {} }), minutes * 60 * 1000);
+};
+
+/* 📥 Authorization Request */
 export const handleAuthorizationRequest = (req, res) => {
   const { mac, ip, name } = req.body;
-  if (!mac) return res.status(400).json({ error: "MAC address required" });
+  if (!mac) return res.status(400).json({ error: "MAC required" });
 
-  if (!pendingRequests.find((r) => r.mac === mac)) {
+  if (!pendingRequests.find(r => r.mac === mac)) {
     pendingRequests.push({ mac, ip: ip || "unknown", name: name || "Unknown Device", timestamp: new Date().toISOString(), status: "pending" });
-    console.log(`🔔 Authorization request from: ${mac}`);
+    console.log(`🔔 New device request: ${mac}`);
     deviceEvents.emit("newDeviceAttempt", { mac, ip: ip || "unknown", name: name || "Unknown Device" });
   }
 
   res.json({ message: "Authorization request received", mac });
 };
 
-/* 🟢 Approve / 🔴 Deny requests */
-export const resolveAuthorizationRequest = (req, res) => {
+/* 🟢 Approve / 🔴 Deny */
+export const resolveAuthorizationRequest = async (req, res) => {
   const { mac, action, timeLimit } = req.body;
   if (!mac || !action) return res.status(400).json({ error: "MAC and action required" });
 
-  const index = pendingRequests.findIndex((r) => r.mac === mac);
+  const index = pendingRequests.findIndex(r => r.mac === mac);
   if (index !== -1) pendingRequests.splice(index, 1);
 
-  const approveCmd = `
-    sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
-    sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
-  `;
-  const blockCmd = `
-    sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP;
-    sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP;
-    sudo hostapd_cli -i wlan0 deauthenticate ${mac} || true;
-  `;
+  try {
+    if (action === "approve") {
+      await runCommand(`sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP || true`);
+      await runCommand(`sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP || true`);
+      if (timeLimit) scheduleBlock(mac, timeLimit);
+      deviceEvents.emit("deviceApproved", { mac });
+    } else {
+      await runCommand(`sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP`);
+      await runCommand(`sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP`);
+      await runCommand(`sudo hostapd_cli -i wlan0 deauthenticate ${mac}`);
+      deviceEvents.emit("deviceBlocked", { mac });
+    }
 
-  exec(action === "approve" ? approveCmd : blockCmd, (error) => {
-    if (error) console.warn(`⚠️ ${action} command warning for ${mac}: ${error.message}`);
-  });
+    // Update cache
+    const cache = loadCache();
+    cache[mac] = { ...(cache[mac] || {}), blocked: action !== "approve" };
+    saveCache(cache);
 
-  const cache = loadCache();
-  cache[mac] = { ...(cache[mac] || {}), blocked: action !== "approve" };
-  saveCache(cache);
+    // Broadcast updated device list
+    const devices = await getConnectedDevicesInternal();
+    deviceEvents.emit("device_scan", devices);
 
-  if (action === "approve" && timeLimit) scheduleBlock(mac, timeLimit);
-
-  console.log(`${action === "approve" ? "✅ Approved" : "🚫 Blocked"} device ${mac}`);
-  deviceEvents.emit(action === "approve" ? "deviceApproved" : "deviceBlocked", { mac });
-
-  res.json({ message: `Device ${mac} ${action}ed successfully` });
+    res.json({ message: `Device ${mac} ${action}ed successfully` });
+  } catch (err) {
+    console.error("❌ Resolve request error:", err);
+    res.status(500).json({ error: `Failed to ${action} device` });
+  }
 };
 
-/* 📋 Get pending authorization requests */
+/* 📋 Get Pending Requests */
 export const getPendingRequests = (req, res) => {
   res.json(pendingRequests);
+};
+
+/* 🛰️ API Route: Get Connected Devices */
+export const getConnectedDevices = async (req, res) => {
+  const devices = await getConnectedDevicesInternal();
+  res.json(devices);
 };
