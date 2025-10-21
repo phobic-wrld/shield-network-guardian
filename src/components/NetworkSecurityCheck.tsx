@@ -20,43 +20,61 @@ export const NetworkSecurityCheck = () => {
   const [securityScore, setSecurityScore] = useState(0);
   const { toast } = useToast();
 
-  // Run scan automatically once on mount
-  useEffect(() => {
-    if (securityItems.length === 0) runSecurityScan();
-  }, []);
-
-  // Recalculate security score when results change
+  // Recalculate security score when items update
   useEffect(() => {
     if (securityItems.length > 0) {
-      const totalItems = securityItems.length;
-      const secureItems = securityItems.filter(i => i.status === "secure").length;
-      const warningItems = securityItems.filter(i => i.status === "warning").length;
-      const score = Math.round(((secureItems + warningItems * 0.5) / totalItems) * 100);
+      const total = securityItems.length;
+      const secureCount = securityItems.filter(i => i.status === "secure").length;
+      const warningCount = securityItems.filter(i => i.status === "warning").length;
+      const score = Math.round(((secureCount + warningCount * 0.5) / total) * 100);
       setSecurityScore(score);
     }
   }, [securityItems]);
 
-  // ✅ Replace mock data with backend request
   const runSecurityScan = async () => {
     setIsScanning(true);
-    setSecurityItems([]); // clear old results
+    setSecurityItems([]);
 
     try {
-      const response = await fetch("http://localhost:5000/api/security/scan");
-      if (!response.ok) throw new Error("Failed to run security scan");
+      // 1️⃣ Fetch connected devices
+      const devicesRes = await fetch("http://192.168.4.1:3000/network/scan");
+      const devices = await devicesRes.json();
 
-      const data = await response.json();
-      setSecurityItems(data.items || []); // expect backend to return { items: [...] }
+      // 2️⃣ Fetch performance + alerts
+      const performanceRes = await fetch("http://192.168.4.1:3000/network/performance");
+      const performanceData = await performanceRes.json();
+      const alerts = performanceData.latest.alerts || [];
+
+      // 3️⃣ Map devices to SecurityItem
+      const deviceItems: SecurityItem[] = devices.map((d: any, idx: number) => ({
+        id: idx,
+        name: `Device Connected: ${d.ip}`,
+        status: "secure",
+        details: `MAC: ${d.mac}`,
+        recommendation: d.ip.includes("192.168") ? "Safe device" : "Check unfamiliar device",
+      }));
+
+      // 4️⃣ Map alerts to SecurityItem
+      const alertItems: SecurityItem[] = alerts.map((a: any, idx: number) => ({
+        id: devices.length + idx,
+        name: `Alert: ${a.message}`,
+        status: "critical",
+        details: a.message,
+        recommendation: "Investigate immediately",
+      }));
+
+      // 5️⃣ Combine all items
+      setSecurityItems([...deviceItems, ...alertItems]);
       setLastScan(new Date());
 
       toast({
         title: "Security scan completed",
-        description: `Your network security score: ${securityScore}/100`,
+        description: `Found ${deviceItems.length} devices and ${alertItems.length} alerts`,
       });
     } catch (err: any) {
       toast({
         title: "Scan failed",
-        description: err.message || "Unable to reach backend",
+        description: err.message || "Unable to reach Raspberry Pi backend",
         variant: "destructive",
       });
     } finally {
@@ -64,14 +82,12 @@ export const NetworkSecurityCheck = () => {
     }
   };
 
-  // Color by score
   const getScoreColor = () => {
     if (securityScore >= 80) return "text-status-safe";
     if (securityScore >= 50) return "text-status-warning";
     return "text-status-danger";
   };
 
-  // Icons by status
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "secure":
