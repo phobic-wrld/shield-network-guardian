@@ -105,7 +105,7 @@ export const blockDevice = async (req, res) => {
   try {
     await runCommand(`sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP`);
     await runCommand(`sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP`);
-    await runCommand(`sudo hostapd_cli -i wlan0 deauthenticate ${mac}`);
+    await runCommand(`sudo hostapd_cli -i wlan0 -p /var/run/hostapd deauthenticate ${mac}`);
 
     const cache = loadCache();
     cache[mac] = { ...(cache[mac] || {}), blocked: true };
