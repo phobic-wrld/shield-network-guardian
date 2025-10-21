@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -6,16 +6,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import {
-  Zap,
-  RefreshCw,
-  WifiOff,
-  Wifi,
-  Signal,
-  Activity,
-} from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -27,6 +19,7 @@ import {
 } from "recharts";
 import { useToast } from "@/hooks/use-toast";
 import { OptimizationSuggestion } from "@/components/OptimizationSuggestion";
+import axios from "axios";
 
 interface NetworkStats {
   downloadSpeed: number;
@@ -39,7 +32,7 @@ interface NetworkStats {
 
 interface PlanRecommendation {
   name: string;
-  speed: number; // Mbps
+  speed: number;
   maxDevices: number;
   description: string;
 }
@@ -53,103 +46,86 @@ export const PulseBoost = () => {
     activeOptimizations: 0,
     devices: 0,
   });
+
   const [networkData, setNetworkData] = useState<
     { time: string; download: number; upload: number }[]
   >([]);
+
   const [planFit, setPlanFit] = useState<string>("Checking...");
   const [recommendations, setRecommendations] = useState<PlanRecommendation[]>([]);
   const { toast } = useToast();
-  const wsRef = useRef<WebSocket | null>(null);
 
-  // 📡 --- CONNECT TO WEBSOCKET ---
-  const connectWebSocket = () => {
-    const ws = new WebSocket("ws://192.168.100.11:3000/network-stats");
-    wsRef.current = ws;
+  // Fetch performance data
+  const fetchPerformance = async () => {
+    try {
+      const { data } = await axios.get("/api/network/performance");
+      const latest = data.stats[data.stats.length - 1];
 
-    ws.onopen = () => {
-      console.log("✅ Connected to network WebSocket");
-    };
+      setStats((prev) => ({
+        ...prev,
+        downloadSpeed: latest?.download || 0,
+        uploadSpeed: latest?.upload || 0,
+        ping: latest?.ping || 0,
+        devices: data.devicesCount || prev.devices,
+      }));
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+      // Prepare chart data (last 6 entries)
+      const chartData = data.stats.slice(-6).map((s: any) => ({
+        time: new Date(s.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        download: s.download,
+        upload: s.upload,
+      }));
+      setNetworkData(chartData);
+    } catch (err) {
+      console.error("Error fetching performance:", err);
+      toast({
+        title: "Error",
+        description: "Failed to fetch network performance",
+        variant: "destructive",
+      });
+    }
+  };
 
-        if (data.type === "device_scan") {
-          setStats((prev) => ({ ...prev, devices: data.devices.length }));
-        } else {
-          setStats((prev) => ({
-            ...prev,
-            downloadSpeed: data.downloadSpeed || prev.downloadSpeed,
-            uploadSpeed: data.uploadSpeed || prev.uploadSpeed,
-            ping: data.ping || prev.ping,
-          }));
-
-          const now = new Date();
-          const timeString = `${now.getHours().toString().padStart(2, "0")}:${now
-            .getMinutes()
-            .toString()
-            .padStart(2, "0")}`;
-
-          setNetworkData((prev) => [
-            ...prev.slice(-6),
-            {
-              time: timeString,
-              download: data.downloadSpeed || 0,
-              upload: data.uploadSpeed || 0,
-            },
-          ]);
-        }
-      } catch (err) {
-        console.error("Error parsing WebSocket data:", err);
-      }
-    };
-
-    ws.onclose = () => {
-      console.warn("⚠️ WebSocket disconnected, retrying in 3s...");
-      setTimeout(connectWebSocket, 3000);
-    };
-
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-      ws.close();
-    };
+  // Fetch connected devices count
+  const fetchDevices = async () => {
+    try {
+      const { data } = await axios.get("/api/network/scan");
+      setStats((prev) => ({ ...prev, devices: data.length }));
+    } catch (err) {
+      console.error("Error fetching devices:", err);
+    }
   };
 
   useEffect(() => {
-    connectWebSocket();
-    return () => wsRef.current?.close();
+    fetchPerformance();
+    fetchDevices();
   }, []);
 
-  // 🔁 --- REFRESH NETWORK ---
+  // Refresh network stats
   const handleRefresh = () => {
-    wsRef.current?.send("speedtest");
-    wsRef.current?.send("scandevices");
-    toast({
-      title: "Network scan requested",
-      description: "Fetching latest stats and devices",
-    });
+    fetchPerformance();
+    fetchDevices();
+    toast({ title: "Network refreshed", description: "Updated stats and devices" });
   };
 
-  // 🧠 --- PLAN FIT ANALYSIS ---
+  // Analyze plan fit
   useEffect(() => {
-    const speed = stats.downloadSpeed;
-    const devices = stats.devices;
-
+    const { downloadSpeed, devices } = stats;
     let fitMessage = "Analyzing...";
     let planRecs: PlanRecommendation[] = [];
 
-    if (speed === 0) {
+    if (downloadSpeed === 0) {
       fitMessage = "No active connection detected";
-    } else if (speed < 10 && devices > 4) {
+    } else if (downloadSpeed < 10 && devices > 4) {
       fitMessage = "⚠️ Your plan might be too low for your usage";
       planRecs = [
         { name: "Basic Upgrade", speed: 15, maxDevices: 6, description: "Good for light streaming and browsing." },
         { name: "Standard Upgrade", speed: 25, maxDevices: 10, description: "Ideal for families and gaming." },
       ];
-    } else if (speed >= 10 && devices <= 4) {
+    } else if (downloadSpeed >= 10 && devices <= 4) {
       fitMessage = "✅ Your plan fits your usage well";
-    } else if (speed >= 20 && devices > 10) {
-      fitMessage = "⚠️ High device load detected, consider upgrading for better performance";
+    } else if (downloadSpeed >= 20 && devices > 10) {
+      fitMessage = "⚠️ High device load detected, consider upgrading";
       planRecs = [
         { name: "Pro Plan", speed: 40, maxDevices: 15, description: "Handles many devices without lag." },
         { name: "Ultra Plan", speed: 60, maxDevices: 25, description: "Perfect for heavy streaming & gaming." },
@@ -164,7 +140,7 @@ export const PulseBoost = () => {
 
   return (
     <div className="space-y-6">
-      {/* --- Network Speed Chart --- */}
+      {/* Network Speed Chart */}
       <Card>
         <CardHeader>
           <CardTitle>📡 Network Performance</CardTitle>
@@ -193,7 +169,7 @@ export const PulseBoost = () => {
         </CardContent>
       </Card>
 
-      {/* --- Plan Fit / Lag Detection Section --- */}
+      {/* Plan Fit / Recommendations */}
       <Card>
         <CardHeader>
           <CardTitle>🧠 Smart Network Advisor</CardTitle>
@@ -203,11 +179,8 @@ export const PulseBoost = () => {
           <p className="mb-3 text-base font-medium">{planFit}</p>
           {recommendations.length > 0 && (
             <div className="space-y-2">
-              {recommendations.map((plan, index) => (
-                <div
-                  key={index}
-                  className="border rounded-lg p-3 hover:bg-muted transition"
-                >
+              {recommendations.map((plan, idx) => (
+                <div key={idx} className="border rounded-lg p-3 hover:bg-muted transition">
                   <div className="font-semibold">{plan.name}</div>
                   <div className="text-sm text-muted-foreground">
                     {plan.speed} Mbps • Up to {plan.maxDevices} devices
@@ -220,7 +193,7 @@ export const PulseBoost = () => {
         </CardContent>
       </Card>
 
-      {/* --- Optimization Tips --- */}
+      {/* Optimization Tips */}
       <OptimizationSuggestion
         speed={stats.downloadSpeed}
         devices={stats.devices}

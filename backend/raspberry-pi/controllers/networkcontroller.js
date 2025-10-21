@@ -6,7 +6,7 @@ import path from "path";
 const STATS_FILE = path.resolve("./network-stats.json");
 let latestStats = [];
 
-/* 🧩 Save / Load Stats */
+/* 🧩 Load / Save Stats */
 const loadStats = () => {
   try {
     if (fs.existsSync(STATS_FILE)) {
@@ -27,11 +27,20 @@ const saveStats = (data) => {
 };
 
 /* ---------------------------------------------
-   📊 Get network statistics
+   📊 Get network performance stats (history + latest)
 ---------------------------------------------- */
-export const getStats = (req, res) => {
+export const getPerformance = (req, res) => {
   latestStats = loadStats();
-  res.json({ stats: latestStats });
+  const latest = latestStats[0] || {
+    timestamp: new Date().toISOString(),
+    download: 0,
+    upload: 0,
+    ping: 0,
+    devices: 0,
+    stability: 100,
+    alerts: [],
+  };
+  res.json({ latest, history: latestStats });
 };
 
 /* ---------------------------------------------
@@ -46,10 +55,14 @@ export const runSpeedTest = (req, res) => {
       const stat = {
         timestamp: new Date().toISOString(),
         ping: result.ping.latency,
-        download: (result.download.bandwidth * 8) / 1e6,
-        upload: (result.upload.bandwidth * 8) / 1e6,
+        download: (result.download.bandwidth * 8) / 1e6, // Mbps
+        upload: (result.upload.bandwidth * 8) / 1e6, // Mbps
+        devices: 0, // will populate from scanDevices
+        stability: 100, // default, will update
+        alerts: [],
       };
 
+      // Maintain last 50 records
       latestStats.unshift(stat);
       if (latestStats.length > 50) latestStats.pop();
       saveStats(latestStats);
@@ -79,12 +92,28 @@ export const scanDevices = (req, res) => {
       }
     });
 
+    // Update latest stats devices count
+    latestStats = loadStats();
+    if (latestStats[0]) {
+      latestStats[0].devices = devices.length;
+
+      // Example alert: too many devices
+      if (devices.length > 10) {
+        latestStats[0].alerts.push({
+          type: "warning",
+          message: `High device load: ${devices.length} devices connected`,
+        });
+      }
+
+      saveStats(latestStats);
+    }
+
     res.json(devices);
   });
 };
 
 /* ---------------------------------------------
-   🌐 Network status check (optional)
+   🌐 Check network stability & ping
 ---------------------------------------------- */
 export const checkNetworkStatus = (req, res) => {
   exec("ping -c 3 8.8.8.8", (error, stdout, stderr) => {
@@ -93,8 +122,23 @@ export const checkNetworkStatus = (req, res) => {
     const packetLossMatch = stdout.match(/, (\d+)% packet loss,/);
     const packetLoss = packetLossMatch ? parseInt(packetLossMatch[1], 10) : 0;
 
-    const avgPingMatch = stdout.match(/rtt min\/avg\/max\/mdev = [\d.]+\/([\d.]+)\/[\d.]+\/[\d.]+ ms/);
+    const avgPingMatch = stdout.match(
+      /rtt min\/avg\/max\/mdev = [\d.]+\/([\d.]+)\/[\d.]+\/[\d.]+ ms/
+    );
     const avgPing = avgPingMatch ? parseFloat(avgPingMatch[1]) : null;
+
+    // Update stability in latest stats
+    latestStats = loadStats();
+    if (latestStats[0]) {
+      latestStats[0].stability = 100 - packetLoss;
+      if (packetLoss > 20) {
+        latestStats[0].alerts.push({
+          type: "warning",
+          message: `High packet loss detected: ${packetLoss}%`,
+        });
+      }
+      saveStats(latestStats);
+    }
 
     res.json({
       status: packetLoss === 100 ? "offline" : "online",

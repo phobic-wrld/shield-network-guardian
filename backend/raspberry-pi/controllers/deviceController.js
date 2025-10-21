@@ -114,7 +114,6 @@ export const blockDevice = async (req, res) => {
     console.log(`🚫 Device blocked: ${mac}`);
     deviceEvents.emit("deviceBlocked", { mac });
 
-    // Broadcast updated device list
     const devices = await getConnectedDevicesInternal();
     deviceEvents.emit("device_scan", devices);
 
@@ -125,27 +124,42 @@ export const blockDevice = async (req, res) => {
   }
 };
 
-/* ✅ Unblock Device */
+/* ✅ Unblock Device (forces re-auth & triggers popup) */
 export const unblockDevice = async (req, res) => {
   const { mac } = req.body;
   if (!mac) return res.status(400).json({ error: "MAC required" });
 
   try {
+    // Remove iptables block
     await runCommand(`sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP`);
     await runCommand(`sudo iptables -D FORWARD -m mac --mac-source ${mac} -j DROP`);
+
+    // Force device to disconnect so it reconnects
+    await runCommand(`sudo hostapd_cli -i wlan0 -p /var/run/hostapd deauthenticate ${mac}`);
 
     const cache = loadCache();
     cache[mac] = { ...(cache[mac] || {}), blocked: false };
     saveCache(cache);
 
-    console.log(`✅ Device unblocked: ${mac}`);
+    // Add to pendingRequests to trigger auth popup when reconnecting
+    if (!pendingRequests.find(r => r.mac === mac)) {
+      pendingRequests.push({
+        mac,
+        ip: cache[mac].ip || "unknown",
+        name: cache[mac].name || "Unknown Device",
+        timestamp: new Date().toISOString(),
+        status: "pending"
+      });
+      deviceEvents.emit("newDeviceAttempt", { mac, ip: cache[mac].ip || "unknown", name: cache[mac].name || "Unknown Device" });
+    }
+
+    console.log(`✅ Device unblocked: ${mac} (device must reconnect and re-authenticate)`);
     deviceEvents.emit("deviceUnblocked", { mac });
 
-    // Broadcast updated device list
     const devices = await getConnectedDevicesInternal();
     deviceEvents.emit("device_scan", devices);
 
-    res.json({ message: `Device ${mac} unblocked successfully` });
+    res.json({ message: `Device ${mac} unblocked. They must reconnect and re-authenticate.` });
   } catch (err) {
     console.error("❌ Unblock device error:", err);
     res.status(500).json({ error: "Failed to unblock device" });
@@ -164,7 +178,13 @@ export const handleAuthorizationRequest = (req, res) => {
   if (!mac) return res.status(400).json({ error: "MAC required" });
 
   if (!pendingRequests.find(r => r.mac === mac)) {
-    pendingRequests.push({ mac, ip: ip || "unknown", name: name || "Unknown Device", timestamp: new Date().toISOString(), status: "pending" });
+    pendingRequests.push({
+      mac,
+      ip: ip || "unknown",
+      name: name || "Unknown Device",
+      timestamp: new Date().toISOString(),
+      status: "pending"
+    });
     console.log(`🔔 New device request: ${mac}`);
     deviceEvents.emit("newDeviceAttempt", { mac, ip: ip || "unknown", name: name || "Unknown Device" });
   }
@@ -172,7 +192,7 @@ export const handleAuthorizationRequest = (req, res) => {
   res.json({ message: "Authorization request received", mac });
 };
 
-/* 🟢 Approve / 🔴 Deny */
+/* 🟢 Approve / 🔴 Deny Authorization */
 export const resolveAuthorizationRequest = async (req, res) => {
   const { mac, action, timeLimit } = req.body;
   if (!mac || !action) return res.status(400).json({ error: "MAC and action required" });
@@ -189,16 +209,14 @@ export const resolveAuthorizationRequest = async (req, res) => {
     } else {
       await runCommand(`sudo iptables -I INPUT -m mac --mac-source ${mac} -j DROP`);
       await runCommand(`sudo iptables -I FORWARD -m mac --mac-source ${mac} -j DROP`);
-      await runCommand(`sudo hostapd_cli -i wlan0 deauthenticate ${mac}`);
+      await runCommand(`sudo hostapd_cli -i wlan0 -p /var/run/hostapd deauthenticate ${mac}`);
       deviceEvents.emit("deviceBlocked", { mac });
     }
 
-    // Update cache
     const cache = loadCache();
     cache[mac] = { ...(cache[mac] || {}), blocked: action !== "approve" };
     saveCache(cache);
 
-    // Broadcast updated device list
     const devices = await getConnectedDevicesInternal();
     deviceEvents.emit("device_scan", devices);
 

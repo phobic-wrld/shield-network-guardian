@@ -11,24 +11,20 @@ import { UserPlus, Clock, Wifi, WifiOff } from "lucide-react";
 import { backendApi } from "@/services/apiService";
 
 interface GuestSession {
-  id: string;
+  mac: string;
   name: string;
-  reason: string;
-  duration: number;
-  startTime: string;
-  endTime?: string;
-  isActive: boolean;
-  deviceCount: number;
+  expiresAt?: string;
+  joinedAt: string;
 }
 
 export const InteractiveGuestAccess = () => {
   const [guestName, setGuestName] = useState("");
-  const [guestReason, setGuestReason] = useState("");
+  const [guestMAC, setGuestMAC] = useState("");
   const [duration, setDuration] = useState("60");
   const [guestSessions, setGuestSessions] = useState<GuestSession[]>([]);
   const { toast } = useToast();
 
-  // Fetch guest sessions from backend
+  // Fetch active guests
   const fetchGuestSessions = async () => {
     try {
       const { data } = await backendApi.get("/guests");
@@ -45,14 +41,16 @@ export const InteractiveGuestAccess = () => {
 
   useEffect(() => {
     fetchGuestSessions();
+    const interval = setInterval(fetchGuestSessions, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
   }, []);
 
-  // Add new guest session
+  // Add new guest
   const addGuest = async () => {
-    if (!guestName.trim() || !guestReason.trim()) {
+    if (!guestName.trim() || !guestMAC.trim()) {
       toast({
         title: "Missing Information",
-        description: "Please fill in guest name and reason",
+        description: "Please fill in guest name and MAC address",
         variant: "destructive",
       });
       return;
@@ -60,9 +58,9 @@ export const InteractiveGuestAccess = () => {
 
     try {
       await backendApi.post("/guests", {
+        mac: guestMAC,
         name: guestName,
-        reason: guestReason,
-        duration: parseInt(duration),
+        timeLimitMinutes: parseInt(duration),
       });
 
       toast({
@@ -71,10 +69,9 @@ export const InteractiveGuestAccess = () => {
       });
 
       setGuestName("");
-      setGuestReason("");
+      setGuestMAC("");
       setDuration("60");
-
-      fetchGuestSessions(); // refresh list
+      fetchGuestSessions();
     } catch (error) {
       console.error("Error adding guest:", error);
       toast({
@@ -86,37 +83,46 @@ export const InteractiveGuestAccess = () => {
   };
 
   // End a guest session
-  const endSession = async (sessionId: string) => {
+  const endSession = async (guest: GuestSession) => {
     try {
-      await backendApi.post(`/guests/${sessionId}/end`);
+      await backendApi.post("/guests/remove", { mac: guest.mac });
       toast({
         title: "Session Ended",
-        description: "Guest access terminated successfully.",
+        description: `Guest ${guest.name} removed`,
       });
       fetchGuestSessions();
     } catch (error) {
       console.error("Error ending session:", error);
+      toast({
+        title: "Error",
+        description: `Failed to remove guest ${guest.name}`,
+        variant: "destructive",
+      });
     }
   };
 
-  // Extend a session
-  const extendSession = async (sessionId: string, additionalMinutes: number) => {
+  // Extend a guest session
+  const extendSession = async (guest: GuestSession, additionalMinutes: number) => {
     try {
-      await backendApi.post(`/guests/${sessionId}/extend`, { additionalMinutes });
+      await backendApi.post("/guests/extend", { mac: guest.mac, additionalMinutes });
       toast({
         title: "Session Extended",
-        description: `Access extended by ${additionalMinutes} minutes.`,
+        description: `${guest.name}'s access extended by ${additionalMinutes} minutes`,
       });
       fetchGuestSessions();
     } catch (error) {
       console.error("Error extending session:", error);
+      toast({
+        title: "Error",
+        description: "Failed to extend guest session.",
+        variant: "destructive",
+      });
     }
   };
 
-  const getRemainingTime = (session: GuestSession) => {
-    if (!session.isActive) return "Ended";
-    const elapsed = Date.now() - new Date(session.startTime).getTime();
-    const remaining = session.duration * 60000 - elapsed;
+  const getRemainingTime = (guest: GuestSession) => {
+    if (!guest.expiresAt) return "Unlimited";
+    const remaining = new Date(guest.expiresAt).getTime() - Date.now();
     if (remaining <= 0) return "Expired";
     const minutes = Math.floor(remaining / 60000);
     const hours = Math.floor(minutes / 60);
@@ -124,14 +130,12 @@ export const InteractiveGuestAccess = () => {
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   };
 
-  const getSessionStatus = (session: GuestSession) => {
-    if (!session.isActive) return <Badge variant="outline">Ended</Badge>;
-    const remaining = getRemainingTime(session);
+  const getSessionStatus = (guest: GuestSession) => {
+    if (!guest.expiresAt) return <Badge variant="outline">Active</Badge>;
+    const remaining = getRemainingTime(guest);
     if (remaining === "Expired") return <Badge variant="destructive">Expired</Badge>;
     return <Badge variant="outline" className="bg-green-100 text-green-800">Active</Badge>;
   };
-
-  const activeSessions = guestSessions.filter((s) => s.isActive).length;
 
   return (
     <div className="space-y-6">
@@ -143,18 +147,18 @@ export const InteractiveGuestAccess = () => {
             Guest Access Panel
           </CardTitle>
           <CardDescription>
-            Manage temporary network access for visitors ({activeSessions} active sessions)
+            Manage temporary network access for visitors ({guestSessions.length} active)
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div>
               <Label>Guest Name</Label>
               <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} placeholder="Enter guest name" />
             </div>
             <div>
-              <Label>Reason for Access</Label>
-              <Input value={guestReason} onChange={(e) => setGuestReason(e.target.value)} placeholder="e.g., Meeting" />
+              <Label>Guest MAC</Label>
+              <Input value={guestMAC} onChange={(e) => setGuestMAC(e.target.value)} placeholder="AA:BB:CC:DD:EE:FF" />
             </div>
             <div>
               <Label>Duration (minutes)</Label>
@@ -169,8 +173,10 @@ export const InteractiveGuestAccess = () => {
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex items-end">
+              <Button onClick={addGuest}><UserPlus className="mr-2" size={16}/>Add Guest</Button>
+            </div>
           </div>
-          <Button onClick={addGuest}><UserPlus className="mr-2" size={16}/>Add Guest Access</Button>
         </CardContent>
       </Card>
 
@@ -185,39 +191,33 @@ export const InteractiveGuestAccess = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Guest</TableHead>
-                <TableHead>Reason</TableHead>
+                <TableHead>MAC</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Remaining</TableHead>
-                <TableHead>Devices</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {guestSessions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                  <TableCell colSpan={5} className="text-center py-8 text-gray-500">
                     No guest sessions found
                   </TableCell>
                 </TableRow>
               ) : (
-                guestSessions.map((session) => (
-                  <TableRow key={session.id}>
-                    <TableCell>{session.name}</TableCell>
-                    <TableCell>{session.reason}</TableCell>
-                    <TableCell>{getSessionStatus(session)}</TableCell>
-                    <TableCell><Clock size={14}/>{getRemainingTime(session)}</TableCell>
-                    <TableCell><Wifi size={14}/>{session.deviceCount}</TableCell>
+                guestSessions.map((guest) => (
+                  <TableRow key={guest.mac}>
+                    <TableCell>{guest.name}</TableCell>
+                    <TableCell>{guest.mac}</TableCell>
+                    <TableCell>{getSessionStatus(guest)}</TableCell>
+                    <TableCell><Clock size={14}/> {getRemainingTime(guest)}</TableCell>
                     <TableCell>
-                      {session.isActive ? (
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => extendSession(session.id, 30)}>+30m</Button>
-                          <Button size="sm" variant="destructive" onClick={() => endSession(session.id)}>
-                            <WifiOff size={14} className="mr-1"/>End
-                          </Button>
-                        </div>
-                      ) : (
-                        <Badge variant="outline">Session Ended</Badge>
-                      )}
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => extendSession(guest, 30)}>+30m</Button>
+                        <Button size="sm" variant="destructive" onClick={() => endSession(guest)}>
+                          <WifiOff size={14} className="mr-1"/>End
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
