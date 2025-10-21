@@ -3,11 +3,12 @@ import { exec } from "child_process";
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
+import { deviceEvents } from "../routes/deviceRoutes.js"; // adjust path if needed
 
 const require = createRequire(import.meta.url);
 const oui = require("oui");
 
-const CACHE_FILE = path.resolve("./data/device-cache.json"); // moved to data folder
+const CACHE_FILE = path.resolve("./data/device-cache.json"); 
 let pendingRequests = [];
 
 /* 🧠 Load and Save Cache */
@@ -42,7 +43,7 @@ const categorizeDevice = (vendor, name) => {
 const runCommand = (cmd) =>
   new Promise((resolve, reject) => {
     exec(cmd, (error, stdout, stderr) => {
-      if (error) return reject(stderr);
+      if (error) return reject(stderr || error);
       resolve(stdout);
     });
   });
@@ -63,9 +64,12 @@ export const blockDevice = async (req, res) => {
     const cache = loadCache();
     cache[mac] = { ...(cache[mac] || {}), blocked: true };
     saveCache(cache);
+
     console.log(`🚫 Device blocked: ${mac}`);
+    deviceEvents.emit("deviceBlocked", { mac });
     res.json({ message: `Device ${mac} blocked successfully` });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to block device" });
   }
 };
@@ -85,14 +89,17 @@ export const unblockDevice = async (req, res) => {
     const cache = loadCache();
     cache[mac] = { ...(cache[mac] || {}), blocked: false };
     saveCache(cache);
+
     console.log(`✅ Device unblocked: ${mac}`);
+    deviceEvents.emit("deviceUnblocked", { mac });
     res.json({ message: `Device ${mac} unblocked successfully` });
-  } catch {
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to unblock device" });
   }
 };
 
-/* 🕒 Schedule auto-block */
+/* 🕒 Schedule auto-block (for guests) */
 export const scheduleBlock = (mac, minutes) => {
   console.log(`⏳ Scheduling ${mac} to be blocked after ${minutes} minutes...`);
   setTimeout(async () => {
@@ -105,14 +112,16 @@ export const scheduleBlock = (mac, minutes) => {
       const cache = loadCache();
       cache[mac] = { ...(cache[mac] || {}), blocked: true };
       saveCache(cache);
+
       console.log(`🕓 Auto-blocked ${mac} after ${minutes} minutes`);
+      deviceEvents.emit("deviceBlocked", { mac });
     } catch (err) {
       console.error(`❌ Failed to auto-block ${mac}:`, err);
     }
   }, minutes * 60 * 1000);
 };
 
-/* 🛰️ Scan Shield Guardian WiFi (wlan0) */
+/* 🛰️ Scan connected devices */
 export const getConnectedDevices = (req, res) => {
   exec("sudo arp-scan --interface=wlan0 --localnet", (error, stdout, stderr) => {
     if (error) return res.status(500).json({ error: "Failed to scan network" });
@@ -160,12 +169,13 @@ export const getConnectedDevices = (req, res) => {
 
 /* 📥 Authorization Requests */
 export const handleAuthorizationRequest = (req, res) => {
-  const { mac } = req.body;
+  const { mac, ip, name } = req.body;
   if (!mac) return res.status(400).json({ error: "MAC address required" });
 
   if (!pendingRequests.find((r) => r.mac === mac)) {
-    pendingRequests.push({ mac, timestamp: new Date().toISOString(), status: "pending" });
+    pendingRequests.push({ mac, ip: ip || "unknown", name: name || "Unknown Device", timestamp: new Date().toISOString(), status: "pending" });
     console.log(`🔔 Authorization request from: ${mac}`);
+    deviceEvents.emit("newDeviceAttempt", { mac, ip: ip || "unknown", name: name || "Unknown Device" });
   }
 
   res.json({ message: "Authorization request received", mac });
@@ -177,9 +187,7 @@ export const resolveAuthorizationRequest = (req, res) => {
   if (!mac || !action) return res.status(400).json({ error: "MAC and action required" });
 
   const index = pendingRequests.findIndex((r) => r.mac === mac);
-  if (index === -1) return res.status(404).json({ error: "Request not found" });
-
-  pendingRequests.splice(index, 1);
+  if (index !== -1) pendingRequests.splice(index, 1);
 
   const approveCmd = `
     sudo iptables -D INPUT -m mac --mac-source ${mac} -j DROP 2>/dev/null || true;
@@ -202,6 +210,8 @@ export const resolveAuthorizationRequest = (req, res) => {
   if (action === "approve" && timeLimit) scheduleBlock(mac, timeLimit);
 
   console.log(`${action === "approve" ? "✅ Approved" : "🚫 Blocked"} device ${mac}`);
+  deviceEvents.emit(action === "approve" ? "deviceApproved" : "deviceBlocked", { mac });
+
   res.json({ message: `Device ${mac} ${action}ed successfully` });
 };
 

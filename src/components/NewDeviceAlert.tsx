@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tablet, Shield, Ban } from "lucide-react";
+import { Tablet, Shield, Ban, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
@@ -35,7 +35,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
   const [deviceName, setDeviceName] = useState("");
   const [owner, setOwner] = useState("Me");
   const [isGuest, setIsGuest] = useState(false);
-  const [timeLimit, setTimeLimit] = useState(""); // Optional for guest devices
+  const [timeLimit, setTimeLimit] = useState(""); // Guest duration in minutes
   const [loading, setLoading] = useState(false);
 
   const { toast } = useToast();
@@ -54,19 +54,15 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
 
   const hasValidMAC = !!device?.mac;
 
-  /** ✅ Authorize device */
+  /** ✅ Authorize device permanently */
   const handleAuthorize = async () => {
     if (!device || !hasValidMAC) return;
 
     try {
       setLoading(true);
-      await axios.post(`${API_BASE}/authorize`, {
+      await axios.post(`${API_BASE}/resolve`, {
         mac: device.mac,
-        ip: device.ip,
-        name: deviceName.trim() || device.name || "Unnamed Device",
-        owner: owner.trim() || "Unknown",
-        isGuest,
-        timeLimit: isGuest && timeLimit ? timeLimit : undefined,
+        action: "approve",
       });
 
       toast({
@@ -88,13 +84,53 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
     }
   };
 
-  /** 🚫 Block device */
-  const handleBlock = async () => {
+  /** ⏱️ Authorize as guest */
+  const handleGuest = async () => {
+    if (!device || !hasValidMAC) return;
+    if (!timeLimit || Number(timeLimit) <= 0)
+      return toast({
+        title: "⏱️ Time limit required",
+        description: "Please set a valid duration for guest access.",
+        variant: "destructive",
+      });
+
+    try {
+      setLoading(true);
+      await axios.post(`${API_BASE}/resolve`, {
+        mac: device.mac,
+        action: "approve",
+        timeLimit: Number(timeLimit),
+      });
+
+      toast({
+        title: "🟢 Guest Authorized",
+        description: `${deviceName || device.name || "Device"} can access for ${timeLimit} minutes.`,
+      });
+
+      queryClient.invalidateQueries(["devices"]);
+      onOpenChange(false);
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: "Guest Authorization Failed",
+        description: "Unable to authorize guest device. Check your connection.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** 🚫 Deny / Block device */
+  const handleDeny = async () => {
     if (!device || !hasValidMAC) return;
 
     try {
       setLoading(true);
-      await axios.post(`${API_BASE}/block`, { mac: device.mac });
+      await axios.post(`${API_BASE}/resolve`, {
+        mac: device.mac,
+        action: "block",
+      });
 
       toast({
         title: "🚫 Device Blocked",
@@ -126,7 +162,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
           </div>
           <AlertDialogTitle>New Device Attempting to Connect</AlertDialogTitle>
           <AlertDialogDescription>
-            A new device is trying to connect to your Wi-Fi. Authorize it or block it immediately.
+            A new device is trying to connect to your Wi-Fi. Authorize it permanently, allow guest access, or block it.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -153,7 +189,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
               id="device-name"
               value={deviceName}
               onChange={(e) => setDeviceName(e.target.value)}
-              placeholder="Enter device name (e.g., Grace’s iPhone)"
+              placeholder="Enter device name"
               disabled={loading}
             />
           </div>
@@ -164,7 +200,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
               id="owner"
               value={owner}
               onChange={(e) => setOwner(e.target.value)}
-              placeholder="e.g., Grace"
+              placeholder="Owner name"
               disabled={loading}
             />
           </div>
@@ -192,7 +228,7 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
                 type="number"
                 value={timeLimit}
                 onChange={(e) => setTimeLimit(e.target.value)}
-                placeholder="Optional for guest devices"
+                placeholder="e.g., 30"
                 disabled={loading}
               />
             </div>
@@ -204,12 +240,22 @@ export const NewDeviceAlert = ({ device, open, onOpenChange }: Props) => {
           <AlertDialogCancel disabled={loading}>Dismiss</AlertDialogCancel>
 
           <AlertDialogAction
-            onClick={handleBlock}
+            onClick={handleDeny}
             className="bg-destructive text-white hover:bg-destructive/90 flex items-center gap-2"
             disabled={!hasValidMAC || loading}
           >
             <Ban className="h-4 w-4" /> {loading ? "Blocking..." : "Block"}
           </AlertDialogAction>
+
+          {isGuest && (
+            <AlertDialogAction
+              onClick={handleGuest}
+              className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
+              disabled={!hasValidMAC || loading}
+            >
+              <Clock className="h-4 w-4" /> {loading ? "Processing..." : "Guest"}
+            </AlertDialogAction>
+          )}
 
           <AlertDialogAction
             onClick={handleAuthorize}

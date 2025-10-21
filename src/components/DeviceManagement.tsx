@@ -44,8 +44,8 @@ export interface Device {
 interface DeviceManagementProps {
   devices: Device[];
   isLoading: boolean;
-  onBlock: (mac: string) => void;
-  onUnblock: (mac: string) => void;
+  onBlock: (mac: string) => Promise<void> | void;
+  onUnblock: (mac: string) => Promise<void> | void;
 }
 
 export const DeviceManagement = ({
@@ -116,15 +116,17 @@ export const DeviceManagement = ({
   const formatDate = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "—");
 
   /** 🚫 Block / ✅ Unblock */
-  const handleBlock = (mac: string) => {
+  const handleBlock = async (mac: string) => {
+    if (!mac) return;
     setLoadingMACs((prev) => new Set(prev).add(mac));
-    onBlock(mac);
-    setTimeout(() => setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; }), 2000);
+    try { await onBlock(mac); } catch {} 
+    setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; });
   };
-  const handleUnblock = (mac: string) => {
+  const handleUnblock = async (mac: string) => {
+    if (!mac) return;
     setLoadingMACs((prev) => new Set(prev).add(mac));
-    onUnblock(mac);
-    setTimeout(() => setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; }), 2000);
+    try { await onUnblock(mac); } catch {}
+    setLoadingMACs((prev) => { const c = new Set(prev); c.delete(mac); return c; });
   };
 
   if (isLoading)

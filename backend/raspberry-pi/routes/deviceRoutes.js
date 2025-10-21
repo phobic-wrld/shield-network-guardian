@@ -9,6 +9,7 @@ import {
   resolveAuthorizationRequest,
 } from "../controllers/deviceController.js";
 import { EventEmitter } from "events";
+import fs from "fs";
 
 const router = express.Router();
 export const deviceEvents = new EventEmitter();

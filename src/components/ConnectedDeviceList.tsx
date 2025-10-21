@@ -14,10 +14,13 @@ export interface Device {
   status: "online" | "offline" | "unknown";
   blocked?: boolean;
   lastSeen: string;
+  pending?: boolean; // new for pending authorization
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://192.168.100.11:3000/api/devices";
-const WS_URL = import.meta.env.VITE_WS_URL || "ws://192.168.100.11:3000/network-stats";
+// ---------------------- HOTSPOT CONFIG ----------------------
+const HOTSPOT_IP = "192.168.4.1";
+const API_BASE = `http://${HOTSPOT_IP}:3000/api/devices`;
+const WS_URL = `ws://${HOTSPOT_IP}:3000/network-stats`;
 
 // ---------------------- API FUNCTIONS ----------------------
 const api = {
@@ -34,6 +37,7 @@ const api = {
       status: d.status || "unknown",
       blocked: d.blocked || false,
       lastSeen: d.lastSeen || new Date().toISOString(),
+      pending: false,
     }));
   },
   block: (mac: string) =>
@@ -48,11 +52,11 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mac }),
     }).then(res => res.json()),
-  authorize: (mac: string) =>
+  authorize: (mac: string, timeLimit?: number) =>
     fetch(`${API_BASE}/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mac, action: "approve" }),
+      body: JSON.stringify({ mac, action: "approve", timeLimit }),
     }).then(res => res.json()),
   deny: (mac: string) =>
     fetch(`${API_BASE}/resolve`, {
@@ -60,6 +64,8 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mac, action: "block" }),
     }).then(res => res.json()),
+  getPendingRequests: () =>
+    fetch(`${API_BASE}/pending/requests`).then(res => res.json()),
 };
 
 // ---------------------- React Component ----------------------
@@ -67,34 +73,58 @@ export const ConnectedDeviceList = () => {
   const [alertDevice, setAlertDevice] = useState<Device | null>(null);
   const [showAlert, setShowAlert] = useState(false);
   const [knownMACs, setKnownMACs] = useState<Set<string>>(new Set());
+  const [pendingRequests, setPendingRequests] = useState<Device[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // React Query: Fetch all devices
+  // ---------------------- Fetch devices ----------------------
   const { data: devices = [], isLoading, isError } = useQuery({
     queryKey: ["devices"],
     queryFn: api.fetchDevices,
-    refetchInterval: 15000, // refresh every 15 seconds
+    refetchInterval: 15000,
   });
 
   // ---------------------- Mutations ----------------------
-  const createMutation = (fn: (mac: string) => Promise<any>, successTitle: string) =>
-    useMutation(fn, {
-      onSuccess: (_, mac) => {
-        toast({ title: successTitle, description: `MAC: ${mac}` });
-        queryClient.invalidateQueries(["devices"]);
-      },
-      onError: () => toast({ title: "❌ Error", description: "Operation failed" }),
-    });
+  const blockMutation = useMutation({
+    mutationFn: (mac: string) => api.block(mac),
+    onSuccess: (_, mac) => {
+      toast({ title: "🚫 Device Blocked", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: () => toast({ title: "❌ Error", description: "Failed to block device" }),
+  });
 
-  const blockMutation = createMutation(api.block, "🚫 Device Blocked");
-  const unblockMutation = createMutation(api.unblock, "✅ Device Unblocked");
-  const approveMutation = createMutation(api.authorize, "🟢 Device Approved");
-  const denyMutation = createMutation(api.deny, "🚫 Device Denied");
+  const unblockMutation = useMutation({
+    mutationFn: (mac: string) => api.unblock(mac),
+    onSuccess: (_, mac) => {
+      toast({ title: "✅ Device Unblocked", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: () => toast({ title: "❌ Error", description: "Failed to unblock device" }),
+  });
 
-  // ---------------------- Detect New Devices ----------------------
+  const approveMutation = useMutation({
+    mutationFn: ({ mac, timeLimit }: { mac: string; timeLimit?: number }) =>
+      api.authorize(mac, timeLimit),
+    onSuccess: (_, { mac }) => {
+      toast({ title: "🟢 Device Approved", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: () => toast({ title: "❌ Error", description: "Failed to approve device" }),
+  });
+
+  const denyMutation = useMutation({
+    mutationFn: (mac: string) => api.deny(mac),
+    onSuccess: (_, mac) => {
+      toast({ title: "🚫 Device Denied", description: `MAC: ${mac}` });
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: () => toast({ title: "❌ Error", description: "Failed to deny device" }),
+  });
+
+  // ---------------------- Detect new devices ----------------------
   useEffect(() => {
     if (!devices.length) return;
 
@@ -119,7 +149,16 @@ export const ConnectedDeviceList = () => {
     setKnownMACs(currentMACs);
   }, [devices]);
 
-  // ---------------------- WebSocket Real-Time Updates ----------------------
+  // ---------------------- Fetch pending requests ----------------------
+  useEffect(() => {
+    const fetchPending = async () => {
+      const pending = await api.getPendingRequests();
+      setPendingRequests(pending);
+    };
+    fetchPending();
+  }, [devices]);
+
+  // ---------------------- WebSocket real-time updates ----------------------
   useEffect(() => {
     const connectWebSocket = () => {
       const socket = new WebSocket(WS_URL);
@@ -134,11 +173,11 @@ export const ConnectedDeviceList = () => {
           switch (msg.type) {
             case "device_blocked":
               toast({ title: "🚫 Device Blocked", description: msg.data.mac });
-              queryClient.invalidateQueries(["devices"]);
+              queryClient.invalidateQueries({ queryKey: ["devices"] });
               break;
             case "device_unblocked":
               toast({ title: "✅ Device Unblocked", description: msg.data.mac });
-              queryClient.invalidateQueries(["devices"]);
+              queryClient.invalidateQueries({ queryKey: ["devices"] });
               break;
             case "new_device_attempt":
               toast({
@@ -157,7 +196,7 @@ export const ConnectedDeviceList = () => {
               setShowAlert(true);
               break;
             case "device_scan":
-              queryClient.invalidateQueries(["devices"]);
+              queryClient.invalidateQueries({ queryKey: ["devices"] });
               break;
           }
         } catch (err) {
@@ -187,12 +226,17 @@ export const ConnectedDeviceList = () => {
           device={alertDevice}
           open={showAlert}
           onOpenChange={setShowAlert}
-          onApprove={mac => {
-            approveMutation.mutate(mac);
+          onApprove={(mac) => {
+            approveMutation.mutate({ mac });
             setShowAlert(false);
           }}
-          onDeny={mac => {
+          onDeny={(mac) => {
             denyMutation.mutate(mac);
+            setShowAlert(false);
+          }}
+          onGuest={(mac) => {
+            const guestTime = 30; // guest for 30 minutes
+            approveMutation.mutate({ mac, timeLimit: guestTime });
             setShowAlert(false);
           }}
         />

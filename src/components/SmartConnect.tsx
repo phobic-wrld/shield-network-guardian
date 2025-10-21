@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import axios from "axios";
-import io, { Socket } from "socket.io-client";
 import {
   Card,
   CardContent,
@@ -15,56 +14,27 @@ import { useToast } from "@/hooks/use-toast";
 import { Activity, Zap } from "lucide-react";
 
 interface NetworkStat {
-  throughputMbps: number;
-  latencyMs: number;
-  packetLossPercent: number;
-  timestamp?: string;
+  downloadSpeed: number;
+  uploadSpeed: number;
+  ping: number;
+  timestamp: string;
 }
 
-// ✅ Point directly to Raspberry Pi backend
+// ✅ Pi backend URL
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://192.168.100.11:3000";
-const socket: Socket = io(BACKEND_URL, {
-  transports: ["websocket"],
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
-});
+const WS_URL = import.meta.env.VITE_WS_URL || "ws://192.168.100.11:3000/network-stats";
 
 export const SmartConnect = () => {
   const [isScanning, setIsScanning] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<
-    "idle" | "scanning" | "completed"
-  >("idle");
   const [stats, setStats] = useState<NetworkStat[]>([]);
   const { toast } = useToast();
+  const socketRef = useRef<WebSocket | null>(null);
 
-  useEffect(() => {
-    fetchStats();
-
-    // 🧠 Listen for real-time updates from backend
-    socket.off("stats:update");
-    socket.on("stats:update", (newStat: NetworkStat) => {
-      setStats((prev) => [newStat, ...prev.slice(0, 49)]);
-    });
-
-    socket.on("connect_error", (err) => {
-      console.error("Socket connection failed:", err.message);
-    });
-
-    return () => {
-      socket.off("stats:update");
-      socket.disconnect();
-    };
-  }, []);
-
+  // ---------------------- Fetch initial stats ----------------------
   const fetchStats = async () => {
     try {
-      const res = await axios.get<{ stats: NetworkStat[] }>(
-        `${BACKEND_URL}/api/network/stats`,
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        }
-      );
-      setStats(res.data.stats);
+      const res = await axios.get<NetworkStat>(`${BACKEND_URL}/api/network/stats`);
+      setStats([res.data]);
     } catch (err) {
       console.error("❌ Failed to fetch stats:", err);
       toast({
@@ -75,36 +45,52 @@ export const SmartConnect = () => {
     }
   };
 
+  useEffect(() => {
+    fetchStats();
+
+    // ---------------------- WebSocket ----------------------
+    const ws = new WebSocket(WS_URL);
+    socketRef.current = ws;
+
+    ws.onopen = () => console.log("✅ WebSocket connected");
+    ws.onclose = () => {
+      console.log("❌ WebSocket disconnected, retrying in 5s");
+      setTimeout(() => {
+        fetchStats();
+        socketRef.current = new WebSocket(WS_URL);
+      }, 5000);
+    };
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "stats_update" || msg.type === "speedtest") {
+          setStats([msg.data, ...stats.slice(0, 49)]);
+        }
+      } catch (err) {
+        console.error("❌ WebSocket parse error:", err);
+      }
+    };
+
+    return () => socketRef.current?.close();
+  }, []);
+
   const handleQuickScan = async () => {
     setIsScanning(true);
-    setConnectionStatus("scanning");
-
     try {
-      // Generate mock test data for quick simulation
-      const mockData: NetworkStat = {
-        throughputMbps: Math.floor(Math.random() * 100) + 20,
-        latencyMs: Math.floor(Math.random() * 50) + 5,
-        packetLossPercent: Math.floor(Math.random() * 5),
-      };
-
-      await axios.post(`${BACKEND_URL}/api/network/update`, mockData, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-
+      // Trigger backend speedtest
+      const res = await axios.get<NetworkStat>(`${BACKEND_URL}/api/network/speedtest`);
+      setStats([res.data, ...stats.slice(0, 49)]);
       toast({
-        title: "Network Updated",
-        description: "New network statistics have been recorded successfully.",
+        title: "Speedtest Complete",
+        description: `Download: ${res.data.downloadSpeed} Mbps, Upload: ${res.data.uploadSpeed} Mbps`,
       });
-
-      setConnectionStatus("completed");
     } catch (err) {
-      console.error("❌ Failed to post network update:", err);
+      console.error("❌ Failed to run speedtest:", err);
       toast({
-        title: "Update Failed",
-        description: "Could not send new stats to Raspberry Pi.",
+        title: "Speedtest Failed",
+        description: "Unable to run speedtest on Raspberry Pi.",
         variant: "destructive",
       });
-      setConnectionStatus("idle");
     } finally {
       setIsScanning(false);
     }
@@ -117,7 +103,7 @@ export const SmartConnect = () => {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Smart Connect</h1>
         <p className="text-muted-foreground">
-          Connect and monitor your network devices in real-time
+          Monitor your network in real-time
         </p>
       </div>
 
@@ -128,34 +114,30 @@ export const SmartConnect = () => {
             Network Statistics
           </CardTitle>
           <CardDescription>
-            Live throughput, latency, and packet loss updates
+            Live download, upload, and ping stats
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-4">
           {latestStat ? (
             <div className="grid grid-cols-3 gap-4">
-              <div className="text-center p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                <div className="text-2xl font-bold text-green-700 dark:text-green-300">
-                  {latestStat.throughputMbps} Mbps
+              <div className="text-center p-3 bg-green-50 rounded-lg">
+                <div className="text-2xl font-bold text-green-700">
+                  {latestStat.downloadSpeed} Mbps
                 </div>
-                <div className="text-xs text-green-600 dark:text-green-400">
-                  Throughput
-                </div>
+                <div className="text-xs text-green-600">Download</div>
               </div>
-              <div className="text-center p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                <div className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                  {latestStat.latencyMs} ms
+              <div className="text-center p-3 bg-blue-50 rounded-lg">
+                <div className="text-2xl font-bold text-blue-700">
+                  {latestStat.uploadSpeed} Mbps
                 </div>
-                <div className="text-xs text-blue-600 dark:text-blue-400">Latency</div>
+                <div className="text-xs text-blue-600">Upload</div>
               </div>
-              <div className="text-center p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                <div className="text-2xl font-bold text-red-700 dark:text-red-300">
-                  {latestStat.packetLossPercent}%
+              <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                <div className="text-2xl font-bold text-yellow-700">
+                  {latestStat.ping} ms
                 </div>
-                <div className="text-xs text-red-600 dark:text-red-400">
-                  Packet Loss
-                </div>
+                <div className="text-xs text-yellow-600">Ping</div>
               </div>
             </div>
           ) : (
@@ -167,28 +149,15 @@ export const SmartConnect = () => {
           {isScanning && (
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
-                <span>Updating...</span>
-                <span>Gathering data...</span>
+                <span>Running speedtest...</span>
               </div>
               <Progress value={85} className="h-2" />
             </div>
           )}
 
           <div className="flex justify-between items-center pt-4">
-            <Badge
-              variant={
-                connectionStatus === "completed"
-                  ? "default"
-                  : connectionStatus === "scanning"
-                  ? "secondary"
-                  : "outline"
-              }
-            >
-              {connectionStatus === "completed"
-                ? "Update Complete"
-                : connectionStatus === "scanning"
-                ? "Updating..."
-                : "Idle"}
+            <Badge variant={isScanning ? "secondary" : "default"}>
+              {isScanning ? "Scanning..." : "Idle"}
             </Badge>
 
             <Button onClick={handleQuickScan} disabled={isScanning}>
@@ -200,7 +169,7 @@ export const SmartConnect = () => {
               ) : (
                 <>
                   <Zap className="mr-2" size={16} />
-                  Quick Update
+                  Quick Speedtest
                 </>
               )}
             </Button>

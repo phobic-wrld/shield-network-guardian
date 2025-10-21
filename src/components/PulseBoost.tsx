@@ -63,7 +63,7 @@ export const PulseBoost = () => {
 
   // 📡 --- CONNECT TO WEBSOCKET ---
   const connectWebSocket = () => {
-    const ws = new WebSocket("ws://192.168.100.10:3000/network-stats");
+    const ws = new WebSocket("ws://192.168.100.11:3000/network-stats");
     wsRef.current = ws;
 
     ws.onopen = () => {
