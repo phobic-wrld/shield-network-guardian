@@ -27,7 +27,7 @@ const saveStats = (data) => {
 };
 
 /* ---------------------------------------------
-   📊 Get network performance stats (history + latest)
+   📊 Get network performance stats (latest + history)
 ---------------------------------------------- */
 export const getPerformance = (req, res) => {
   latestStats = loadStats();
@@ -57,12 +57,11 @@ export const runSpeedTest = (req, res) => {
         ping: result.ping.latency,
         download: (result.download.bandwidth * 8) / 1e6, // Mbps
         upload: (result.upload.bandwidth * 8) / 1e6, // Mbps
-        devices: 0, // will populate from scanDevices
-        stability: 100, // default, will update
-        alerts: [],
+        devices: latestStats[0]?.devices || 0,
+        stability: latestStats[0]?.stability || 100,
+        alerts: latestStats[0]?.alerts || [],
       };
 
-      // Maintain last 50 records
       latestStats.unshift(stat);
       if (latestStats.length > 50) latestStats.pop();
       saveStats(latestStats);
@@ -76,7 +75,7 @@ export const runSpeedTest = (req, res) => {
 };
 
 /* ---------------------------------------------
-   🔍 Scan devices on Shield Guardian WiFi
+   🔍 Scan devices on WiFi
 ---------------------------------------------- */
 export const scanDevices = (req, res) => {
   exec("sudo arp-scan --interface=wlan0 --localnet", (error, stdout, stderr) => {
@@ -92,12 +91,10 @@ export const scanDevices = (req, res) => {
       }
     });
 
-    // Update latest stats devices count
     latestStats = loadStats();
     if (latestStats[0]) {
       latestStats[0].devices = devices.length;
 
-      // Example alert: too many devices
       if (devices.length > 10) {
         latestStats[0].alerts.push({
           type: "warning",
@@ -127,16 +124,17 @@ export const checkNetworkStatus = (req, res) => {
     );
     const avgPing = avgPingMatch ? parseFloat(avgPingMatch[1]) : null;
 
-    // Update stability in latest stats
     latestStats = loadStats();
     if (latestStats[0]) {
       latestStats[0].stability = 100 - packetLoss;
+
       if (packetLoss > 20) {
         latestStats[0].alerts.push({
           type: "warning",
           message: `High packet loss detected: ${packetLoss}%`,
         });
       }
+
       saveStats(latestStats);
     }
 
@@ -146,4 +144,13 @@ export const checkNetworkStatus = (req, res) => {
       avgPing,
     });
   });
+};
+
+/* ---------------------------------------------
+   🚨 Get current network alerts
+---------------------------------------------- */
+export const getAlerts = (req, res) => {
+  latestStats = loadStats();
+  const alerts = latestStats[0]?.alerts || [];
+  res.json({ alerts });
 };

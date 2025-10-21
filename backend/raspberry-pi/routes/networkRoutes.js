@@ -4,7 +4,8 @@ import {
   getPerformance, 
   scanDevices, 
   checkNetworkStatus, 
-  runSpeedTest 
+  runSpeedTest,
+  getAlerts
 } from "../controllers/networkController.js";
 
 const router = express.Router();
@@ -28,5 +29,10 @@ router.get("/speedtest", runSpeedTest);
    🌐 Check network health / stability
 ---------------------------------------------- */
 router.get("/health", checkNetworkStatus);
+
+/* ---------------------------------------------
+   🚨 Get current network alerts
+---------------------------------------------- */
+router.get("/alerts", getAlerts);
 
 export default router;
