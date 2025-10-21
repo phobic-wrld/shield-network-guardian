@@ -1,5 +1,5 @@
 
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 import { PremiumFeatures } from "@/components/PremiumFeatures";
 import PlanComparison from "@/components/PlanComparison";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

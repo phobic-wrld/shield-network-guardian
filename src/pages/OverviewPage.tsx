@@ -1,6 +1,6 @@
 
 import { NetworkOverview } from "@/components/NetworkOverview";
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 
 const OverviewPage = () => {
   return (

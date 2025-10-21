@@ -1,6 +1,6 @@
 
 import { ConnectedDeviceList } from "@/components/ConnectedDeviceList";
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 
 const DevicesPage = () => {
   return (

@@ -1,5 +1,5 @@
 
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 import { LiveDeviceTracker } from "@/components/LiveDeviceTracker";
 import { NetworkStatusChecker } from "@/components/NetworkStatusChecker";
 import { InteractiveGuestAccess } from "@/components/InteractiveGuestAccess";

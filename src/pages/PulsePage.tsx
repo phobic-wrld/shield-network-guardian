@@ -1,8 +1,7 @@
-
-import { PulseBoost } from "@/components/PulseBoost";
-import { NetworkSecurityCheck } from "@/components/NetworkSecurityCheck";
-import { DashboardLayout } from "@/components/DashboardLayout";
-import { SecurityAlerts } from "@/components/SecurityAlerts";
+import PulseBoost from "@/components/PulseBoost";
+import NetworkSecurityCheck from "@/components/NetworkSecurityCheck";
+import DashboardLayout from "@/components/DashboardLayout";
+import SecurityAlerts from "@/components/SecurityAlerts";
 
 const PulsePage = () => {
   return (

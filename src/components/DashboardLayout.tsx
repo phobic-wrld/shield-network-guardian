@@ -1,9 +1,32 @@
 import { ReactNode, useState, useEffect } from "react";
-import { Bell, Search, Menu, X, LogOut, Home, Shield, Wifi, MonitorSpeaker, Users, ShieldCheck, BarChart3, FileDown, Settings, CreditCard, Activity } from "lucide-react";
+import {
+  Bell,
+  Search,
+  Menu,
+  X,
+  LogOut,
+  Home,
+  Shield,
+  Wifi,
+  MonitorSpeaker,
+  Users,
+  ShieldCheck,
+  BarChart3,
+  FileDown,
+  Settings,
+  CreditCard,
+  Activity,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Link, useNavigate } from "react-router-dom";
@@ -11,13 +34,16 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { getUser, logoutUser } from "@/services/authService";
-import { fetchNotifications, markNotificationsRead } from "@/services/notificationService";
+import {
+  fetchNotifications,
+  markNotificationsRead,
+} from "@/services/notificationService";
 
 interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
+const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -33,7 +59,7 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
         setUser(currentUser);
         const notifs = await fetchNotifications();
         setNotifications(notifs);
-        setUnreadCount(notifs.filter(n => !n.read).length);
+        setUnreadCount(notifs.filter((n) => !n.read).length);
       } catch (err) {
         console.error("Error loading dashboard data:", err);
       }
@@ -48,12 +74,14 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
   const markAllAsRead = async () => {
     await markNotificationsRead();
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
     setUnreadCount(0);
   };
 
-  const getUserDisplayName = () => user?.name || user?.email?.split("@")[0] || "Guest User";
-  const getUserInitials = () => (user?.name || user?.email || "GU").substring(0, 2).toUpperCase();
+  const getUserDisplayName = () =>
+    user?.name || user?.email?.split("@")[0] || "Guest User";
+  const getUserInitials = () =>
+    (user?.name || user?.email || "GU").substring(0, 2).toUpperCase();
 
   const menuItems = [
     { icon: Home, label: "Overview", path: "/" },
@@ -77,13 +105,19 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
           <div className="w-64 bg-white dark:bg-card border-r border-border flex flex-col">
             <div className="px-6 py-4 border-b">
               <h2 className="text-lg font-semibold">Dashboard</h2>
-              <p className="text-sm text-muted-foreground">Manage your network and devices.</p>
+              <p className="text-sm text-muted-foreground">
+                Manage your network and devices.
+              </p>
             </div>
 
             <div className="flex flex-col gap-1 px-3 py-4 flex-1">
-              {menuItems.map(item => (
-                <Button key={item.label} variant="ghost" className="justify-start px-4 py-2 rounded-md hover:bg-secondary"
-                  onClick={() => navigate(item.path)}>
+              {menuItems.map((item) => (
+                <Button
+                  key={item.label}
+                  variant="ghost"
+                  className="justify-start px-4 py-2 rounded-md hover:bg-secondary"
+                  onClick={() => navigate(item.path)}
+                >
                   <item.icon className="w-4 h-4 mr-2" />
                   {item.label}
                 </Button>
@@ -96,8 +130,12 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                   <AvatarFallback>{getUserInitials()}</AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col">
-                  <span className="font-medium text-sm">{getUserDisplayName()}</span>
-                  <span className="text-xs text-muted-foreground">{user ? "Authenticated" : "Guest"}</span>
+                  <span className="font-medium text-sm">
+                    {getUserDisplayName()}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {user ? "Authenticated" : "Guest"}
+                  </span>
                 </div>
               </div>
               <ThemeToggle />
@@ -110,15 +148,30 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
           <header className="bg-white dark:bg-card h-16 border-b flex items-center justify-between px-4 md:px-6 shadow-sm">
             <div className="flex items-center space-x-4">
               {isMobile && (
-                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setSidebarOpen(true)}
+                >
                   <Menu size={20} />
                 </Button>
               )}
               <div className="relative hidden sm:block">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                <Input placeholder="Search..." className="pl-10 rounded-full bg-gray-100 dark:bg-muted border-none" value={query} onChange={e => setQuery(e.target.value)} />
+                <Search
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  size={18}
+                />
+                <Input
+                  placeholder="Search..."
+                  className="pl-10 rounded-full bg-gray-100 dark:bg-muted border-none"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
                 {query && (
-                  <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <button
+                    onClick={() => setQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
                     <X size={18} />
                   </button>
                 )}
@@ -131,28 +184,51 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="relative">
                     <Bell size={20} />
-                    {unreadCount > 0 && <Badge className="absolute -top-1 -right-1 h-5 w-5 text-xs flex items-center justify-center">{unreadCount}</Badge>}
+                    {unreadCount > 0 && (
+                      <Badge className="absolute -top-1 -right-1 h-5 w-5 text-xs flex items-center justify-center">
+                        {unreadCount}
+                      </Badge>
+                    )}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-80">
                   <div className="flex items-center justify-between p-3 border-b">
                     <div className="font-medium">Notifications</div>
                     {unreadCount > 0 && (
-                      <Button variant="ghost" size="sm" onClick={markAllAsRead} className="text-xs">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={markAllAsRead}
+                        className="text-xs"
+                      >
                         Mark all read
                       </Button>
                     )}
                   </div>
                   <div className="max-h-64 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <div className="p-4 text-center text-muted-foreground">No notifications</div>
+                      <div className="p-4 text-center text-muted-foreground">
+                        No notifications
+                      </div>
                     ) : (
-                      notifications.map(n => (
-                        <DropdownMenuItem key={n.id} className="p-3 flex flex-col">
-                          <p className={cn("font-medium text-sm", n.type === "warning" && "text-orange-600", n.type === "error" && "text-red-600", n.type === "success" && "text-green-600")}>
+                      notifications.map((n) => (
+                        <DropdownMenuItem
+                          key={n.id}
+                          className="p-3 flex flex-col"
+                        >
+                          <p
+                            className={cn(
+                              "font-medium text-sm",
+                              n.type === "warning" && "text-orange-600",
+                              n.type === "error" && "text-red-600",
+                              n.type === "success" && "text-green-600"
+                            )}
+                          >
                             {n.title}
                           </p>
-                          <p className="text-sm text-muted-foreground">{n.description}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {n.description}
+                          </p>
                         </DropdownMenuItem>
                       ))
                     )}
@@ -176,3 +252,5 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     </div>
   );
 };
+
+export default DashboardLayout;

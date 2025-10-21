@@ -1,5 +1,5 @@
 
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 import { EnhancedAnalytics } from "@/components/EnhancedAnalytics";
 
 const AnalyticsPage = () => {

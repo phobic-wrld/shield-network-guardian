@@ -1,7 +1,6 @@
-
-import { DashboardLayout } from "@/components/DashboardLayout";
-import { NetworkSecurityCheck } from "@/components/NetworkSecurityCheck";
-import { SecurityAlerts } from "@/components/SecurityAlerts";
+import  DashboardLayout  from "@/components/DashboardLayout";
+import NetworkSecurityCheck from "@/components/NetworkSecurityCheck";
+import SecurityAlerts from "@/components/SecurityAlerts";
 
 const SecurityPage = () => {
   return (

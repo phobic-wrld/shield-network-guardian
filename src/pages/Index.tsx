@@ -1,5 +1,5 @@
 
-import { DashboardLayout } from "@/components/DashboardLayout";
+import  DashboardLayout  from "@/components/DashboardLayout";
 import { RealtimeActivityFeed } from "@/components/RealtimeActivityFeed";
 import { DownloadsManager } from "@/components/DownloadsManager";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
