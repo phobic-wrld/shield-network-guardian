@@ -10,7 +10,7 @@ const PulseBoost = () => {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const res = await fetch("http://192.168.4.1:3000/network/alerts");
+        const res = await fetch("http://192.168.4.1:3000/api/network/alerts");
         const data = await res.json();
         setAlerts(data.alerts || []);
         setScanTime(new Date().toLocaleString());
